@@ -1,8 +1,9 @@
 package io.nimbly.mcpcompanion
 
-import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.EditorFactory
@@ -40,11 +41,15 @@ class McpCompanionStartupActivity : ProjectActivity {
                         "You can change this anytime in Settings → Tools → MCP Server Companion.",
                         NotificationType.INFORMATION
                     )
-                    .addAction(NotificationAction.createSimple("OK, got it") {
-                        ourSettings.setTelemetryEnabled(true)
+                    .addAction(object : AnAction("OK, got it") {
+                        override fun actionPerformed(e: AnActionEvent) {
+                            ourSettings.setTelemetryEnabled(true)
+                        }
                     })
-                    .addAction(NotificationAction.createSimple("Disable sharing") {
-                        ourSettings.setTelemetryEnabled(false)
+                    .addAction(object : AnAction("Disable sharing") {
+                        override fun actionPerformed(e: AnActionEvent) {
+                            ourSettings.setTelemetryEnabled(false)
+                        }
                     })
                     .notify(project)
             }
