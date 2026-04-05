@@ -33,28 +33,26 @@ class McpCompanionStartupActivity : ProjectActivity {
         // ── Telemetry consent notification (shown once) ───────────────────────
         if (!ourSettings.isTelemetryNotificationShown()) {
             ourSettings.setTelemetryNotificationShown(true)  // mark shown immediately — dismiss = accept
-            ApplicationManager.getApplication().invokeLater {
-                NotificationGroupManager.getInstance()
-                    .getNotificationGroup("MCP Server Companion")
-                    .createNotification(
-                        "MCP Server Companion",
-                        "To improve this plugin, anonymous usage statistics are shared.",
-                        NotificationType.INFORMATION
-                    )
-                    .addAction(object : NotificationAction("OK, got it") {
-                        override fun actionPerformed(e: AnActionEvent, notification: Notification) {
-                            ourSettings.setTelemetryEnabled(true)
-                            notification.expire()
-                        }
-                    })
-                    .addAction(object : NotificationAction("Disable sharing") {
-                        override fun actionPerformed(e: AnActionEvent, notification: Notification) {
-                            ourSettings.setTelemetryEnabled(false)
-                            notification.expire()
-                        }
-                    })
-                    .notify(project)
-            }
+            NotificationGroupManager.getInstance()
+                .getNotificationGroup("MCP Server Companion")
+                .createNotification(
+                    "MCP Server Companion",
+                    "To improve this plugin, anonymous usage statistics are shared.",
+                    NotificationType.INFORMATION
+                )
+                .addAction(object : NotificationAction("OK, got it") {
+                    override fun actionPerformed(e: AnActionEvent, notification: Notification) {
+                        ourSettings.setTelemetryEnabled(true)
+                        notification.expire()
+                    }
+                })
+                .addAction(object : NotificationAction("Disable sharing") {
+                    override fun actionPerformed(e: AnActionEvent, notification: Notification) {
+                        ourSettings.setTelemetryEnabled(false)
+                        notification.expire()
+                    }
+                })
+                .notify(project)
         }
 
         if (ourSettings.state.firstLaunchDone) return
