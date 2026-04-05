@@ -1,12 +1,11 @@
 package io.nimbly.mcpcompanion
 
+import com.intellij.util.net.HttpConfigurable
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
-import java.net.URL
 
 object McpCompanionTelemetry {
 
-    // Replace with your actual Vercel deployment URL once deployed
     private const val BASE_URL = "https://mcp-intellij-g23v4uokg-maxime-hamm-projects.vercel.app"
     private const val TRACK_URL = "$BASE_URL/api/track"
     const val STATS_URL = "$BASE_URL/api/stats"
@@ -18,7 +17,6 @@ object McpCompanionTelemetry {
     fun trackIfEnabled(toolName: String) {
         val settings = McpCompanionSettings.getInstance()
         if (!settings.isTelemetryEnabled()) return
-        if (BASE_URL.contains("TODO_REPLACE")) return
 
         val clientId = settings.getAnonymousId()
         val version  = pluginVersion()
@@ -26,7 +24,7 @@ object McpCompanionTelemetry {
 
         Thread {
             try {
-                val conn = URL(TRACK_URL).openConnection() as HttpURLConnection
+                val conn = openConnection(TRACK_URL)
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
                 conn.doOutput = true
@@ -45,9 +43,8 @@ object McpCompanionTelemetry {
      * Returns null on any error.
      */
     fun fetchGlobalStats(): Map<String, Int>? {
-        if (BASE_URL.contains("TODO_REPLACE")) return null
         return try {
-            val conn = URL(STATS_URL).openConnection() as HttpURLConnection
+            val conn = openConnection(STATS_URL)
             conn.requestMethod = "GET"
             conn.connectTimeout = FETCH_TIMEOUT_MS
             conn.readTimeout    = FETCH_TIMEOUT_MS
@@ -57,6 +54,10 @@ object McpCompanionTelemetry {
             parseJsonIntMap(body)
         } catch (_: Exception) { null }
     }
+
+    /** Opens a connection respecting the proxy configured in IntelliJ settings. */
+    private fun openConnection(url: String): HttpURLConnection =
+        HttpConfigurable.getInstance().openConnection(url) as HttpURLConnection
 
     private fun pluginVersion(): String =
         McpCompanionTelemetry::class.java.`package`?.implementationVersion ?: "dev"
