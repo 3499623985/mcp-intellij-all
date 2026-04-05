@@ -18,7 +18,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     stats[row.tool_name] = row.cnt;
   }
 
-  // Cache 5 min on CDN edge
-  res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
+  res.setHeader('Cache-Control', 'no-store');
   return res.status(200).json(stats);
 }
