@@ -60,6 +60,14 @@ grep -v '"notifications/tools/list_changed"' /tmp/sse.txt | grep "data:" | tail 
 
 > ⚠️ **Règle de test** : pendant les tests, accéder au projet sandbox **uniquement via les outils MCP** (get_open_editors, get_project_structure, navigate_to, etc.). Tout accès disque direct (Read, Glob, Grep, Bash sur les fichiers du sandbox) est **interdit**.
 
+## Réflexion Java
+
+Tout appel par réflexion (`Class.forName`, `getDeclaredField`, `getMethod`, etc.) **doit être accompagné d'un test automatique** dans `ReflectionApiTest.kt` (ou le fichier de test dédié au sous-système concerné).
+
+- Le test vérifie que la classe, le champ ou la méthode existent toujours dans la version IntelliJ courante.
+- Si l'API est optionnelle (plugin tiers, jar non garanti sur le classpath), utiliser `runCatching { }.getOrNull()` et imprimer `INFO:` / `WARNING:` sans `fail()` — le test passe toujours mais signale une dégradation.
+- Si l'API est obligatoire, utiliser `assertNotNull` / `assertEquals` pour faire échouer le build dès qu'elle disparaît.
+
 ## Workflow de développement
 
 1. Coder le tool dans `McpCompanionToolset.kt` — ajouter `disabledMessage("nom_tool")?.let { return it }` en tête

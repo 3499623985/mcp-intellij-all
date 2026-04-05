@@ -1,10 +1,13 @@
 package io.nimbly.mcpcompanion
 
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.util.net.HttpConfigurable
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 
 object McpCompanionTelemetry {
+
+    private val LOG = Logger.getInstance(McpCompanionTelemetry::class.java)
 
     private const val BASE_URL = "https://mcp-intellij-g23v4uokg-maxime-hamm-projects.vercel.app"
     private const val TRACK_URL = "$BASE_URL/api/track"
@@ -31,9 +34,12 @@ object McpCompanionTelemetry {
                 conn.connectTimeout = SEND_TIMEOUT_MS
                 conn.readTimeout    = SEND_TIMEOUT_MS
                 OutputStreamWriter(conn.outputStream).use { it.write(payload) }
-                conn.responseCode   // trigger the request
+                val code = conn.responseCode
                 conn.disconnect()
-            } catch (_: Exception) { /* silent — telemetry must never break the plugin */ }
+                LOG.info("Telemetry sent: $toolName → HTTP $code")
+            } catch (e: Exception) {
+                LOG.warn("Telemetry failed for $toolName: ${e.message}")
+            }
         }.apply { isDaemon = true }.start()
     }
 

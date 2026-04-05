@@ -72,7 +72,7 @@ class McpCompanionStartupActivity : ProjectActivity {
                 NotificationGroupManager.getInstance()
                     .getNotificationGroup("MCP Server Companion")
                     .createNotification(
-                        "MCP Server Companion activated",
+                        "MCP Server Companion",
                         "MCP Server was disabled and has been automatically enabled.",
                         NotificationType.INFORMATION)
                     .addAction(com.intellij.notification.NotificationAction.createSimple("Open MCP Server Companion Settings") {

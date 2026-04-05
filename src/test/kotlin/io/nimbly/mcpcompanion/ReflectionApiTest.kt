@@ -211,4 +211,113 @@ class ReflectionApiTest {
             else println("WARNING: AbstractProgressIndicatorBase.$name() not found — manage_process($name) will fall back gracefully")
         }
     }
+
+    // ── McpServerSettings.MyState.setEnableMcpServer ─────────────────────────
+    // Called in McpCompanionStartupActivity to auto-enable the MCP server on first launch.
+
+    @Test
+    fun `McpServerSettings MyState setEnableMcpServer exists`() {
+        val cls = Class.forName("com.intellij.mcpserver.settings.McpServerSettings\$MyState")
+        val method = cls.methods.find { it.name == "setEnableMcpServer" && it.parameterCount == 1 }
+        assertNotNull(method, "McpServerSettings.MyState.setEnableMcpServer(Boolean) not found — auto-enable on first launch is broken")
+        assertEquals(Boolean::class.javaPrimitiveType, method!!.parameterTypes[0],
+            "McpServerSettings.MyState.setEnableMcpServer must take a boolean parameter")
+    }
+
+    // ── ProgressSuspender ─────────────────────────────────────────────────────
+    // Used in McpCompanionDiagnosticToolset to detect suspended progress indicators.
+
+    @Test
+    fun `ProgressSuspender getSuspender static method exists`() {
+        val cls = runCatching {
+            Class.forName("com.intellij.openapi.progress.impl.ProgressSuspender")
+        }.getOrNull() ?: run {
+            println("INFO: ProgressSuspender not on classpath — skipping (optional API)")
+            return
+        }
+        val method = runCatching {
+            cls.getMethod("getSuspender", com.intellij.openapi.progress.ProgressIndicator::class.java)
+        }.getOrNull()
+        if (method == null) println("WARNING: ProgressSuspender.getSuspender(ProgressIndicator) not found — manage_process suspend info unavailable")
+        else println("OK: ProgressSuspender.getSuspender() → ${method.returnType.name}")
+    }
+
+    @Test
+    fun `ProgressSuspender ourProgressToSuspenderMap field exists`() {
+        val cls = runCatching {
+            Class.forName("com.intellij.openapi.progress.impl.ProgressSuspender")
+        }.getOrNull() ?: run {
+            println("INFO: ProgressSuspender not on classpath — skipping")
+            return
+        }
+        val field = runCatching {
+            cls.getDeclaredField("ourProgressToSuspenderMap").also { it.isAccessible = true }
+        }.getOrNull()
+        if (field == null) println("WARNING: ProgressSuspender.ourProgressToSuspenderMap not found — allSuspenderEntries() will return empty")
+        else println("OK: ProgressSuspender.ourProgressToSuspenderMap found (${field.type.name})")
+    }
+
+    @Test
+    fun `ProgressSuspender isSuspended and getSuspendedText exist`() {
+        val cls = runCatching {
+            Class.forName("com.intellij.openapi.progress.impl.ProgressSuspender")
+        }.getOrNull() ?: run {
+            println("INFO: ProgressSuspender not on classpath — skipping")
+            return
+        }
+        for (name in listOf("isSuspended", "getSuspendedText")) {
+            val found = cls.methods.any { it.name == name && it.parameterCount == 0 }
+            if (found) println("OK: ProgressSuspender.$name() found")
+            else println("WARNING: ProgressSuspender.$name() not found — diagnostic suspend status unavailable")
+        }
+    }
+
+    // ── EditorComponentImpl (ConsoleUtil + get_services_output) ──────────────
+    // ConsoleUtil.readText() and readEditorText() both use EditorComponentImpl → myEditor field.
+
+    @Test
+    fun `EditorComponentImpl class exists`() {
+        val cls = runCatching {
+            Class.forName("com.intellij.openapi.editor.impl.EditorComponentImpl")
+        }.getOrNull()
+        assertNotNull(cls, "EditorComponentImpl not found — ConsoleUtil.readText() and readEditorText() are broken")
+        println("OK: EditorComponentImpl found")
+    }
+
+    @Test
+    fun `EditorComponentImpl has myEditor or editor field`() {
+        val cls = runCatching {
+            Class.forName("com.intellij.openapi.editor.impl.EditorComponentImpl")
+        }.getOrNull() ?: run {
+            println("INFO: EditorComponentImpl not on classpath — skipping field check")
+            return
+        }
+        val field = generateSequence(cls as Class<*>?) { it.superclass }
+            .flatMap { it.declaredFields.asSequence() }
+            .find { it.name == "myEditor" || it.name == "editor" }
+        assertNotNull(field,
+            "EditorComponentImpl has no 'myEditor' or 'editor' field — ConsoleUtil editor extraction is broken")
+        assertTrue(com.intellij.openapi.editor.Editor::class.java.isAssignableFrom(field!!.type),
+            "EditorComponentImpl.${field.name} must be of type Editor")
+        println("OK: EditorComponentImpl.${field.name}: ${field.type.simpleName}")
+    }
+
+    // ── Build node reflection (McpCompanionBuildToolset) ─────────────────────
+    // Build output nodes are accessed via reflection on their actual runtime type.
+    // The key contract: AbstractTreeNode-like objects expose getTitle/getHint/getElement.
+
+    @Test
+    fun `ExecutionNode getTitle and getHint exist`() {
+        val cls = runCatching {
+            Class.forName("com.intellij.build.ExecutionNode")
+        }.getOrNull() ?: run {
+            println("INFO: ExecutionNode not on test classpath — skipping (build node reflection verified at runtime)")
+            return
+        }
+        for (name in listOf("getTitle", "getHint")) {
+            val found = cls.methods.any { it.name == name && it.parameterCount == 0 }
+            if (found) println("OK: ExecutionNode.$name() found")
+            else println("WARNING: ExecutionNode.$name() not found — get_build_output title/hint extraction may degrade")
+        }
+    }
 }
