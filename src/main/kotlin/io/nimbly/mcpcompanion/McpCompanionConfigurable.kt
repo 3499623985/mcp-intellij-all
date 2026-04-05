@@ -45,6 +45,7 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
     private var globalToggle: JToggleButton? = null
     private var refreshButton: JButton? = null
     private var lastUpdatedLabel: JLabel? = null
+    private var telemetryCheckbox: JCheckBox? = null
 
     private val toolCheckboxes = mutableListOf<JCheckBox>()
     private val descriptionLabels = mutableListOf<JLabel>()
@@ -131,44 +132,6 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
                 }
             }
 
-            // ── Usage stats toggle ────────────────────────────────────────────
-            row {
-                val sessionBtn = JToggleButton("Ma session", statsMode == StatsMode.SESSION)
-                val globalBtn  = JToggleButton("Tous les utilisateurs", statsMode == StatsMode.GLOBAL)
-                sessionToggle = sessionBtn
-                globalToggle  = globalBtn
-
-                sessionBtn.addActionListener {
-                    statsMode = StatsMode.SESSION
-                    globalBtn.isSelected = false
-                    sessionBtn.isSelected = true
-                    refreshState()
-                }
-                globalBtn.addActionListener {
-                    statsMode = StatsMode.GLOBAL
-                    sessionBtn.isSelected = false
-                    globalBtn.isSelected = true
-                    if (globalStats == null && !isLoadingGlobal) fetchGlobalStats()
-                    else refreshState()
-                }
-
-                cell(sessionBtn)
-                cell(globalBtn).gap(RightGap.SMALL)
-
-                val refreshBtn = JButton("↺").also {
-                    it.toolTipText = "Refresh global statistics"
-                    it.isVisible = statsMode == StatsMode.GLOBAL
-                    it.addActionListener { fetchGlobalStats() }
-                    refreshButton = it
-                }
-                cell(refreshBtn).gap(RightGap.SMALL)
-
-                lastUpdatedLabel = label("").applyToComponent {
-                    font = UIUtil.getLabelFont().deriveFont(Font.PLAIN, 10f)
-                    foreground = UIUtil.getContextHelpForeground()
-                }.component
-            }.bottomGap(BottomGap.NONE)
-
             McpCompanionSettings.TOOL_GROUPS.forEach { (groupName, toolNames) ->
                 group(groupName) {
                     toolNames.forEach { name ->
@@ -208,7 +171,7 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
                 }
             }
 
-            // ── Analytics opt-in ──────────────────────────────────────────────
+            // ── Analytics opt-in + toggle ─────────────────────────────────────
             group("Analytics") {
                 row {
                     checkBox("Share anonymous usage statistics")
@@ -216,13 +179,55 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
                             getter = { settings.isTelemetryEnabled() },
                             setter = { settings.setTelemetryEnabled(it) }
                         )
+                        .applyToComponent {
+                            telemetryCheckbox = this
+                            addActionListener { refreshState() }
+                        }
                 }
                 row {
                     comment(
                         "Sends tool name + call count anonymously on each tool use. " +
-                        "No code, no file paths, no project data. Required to view global statistics above."
+                        "No code, no file paths, no project data."
                     )
                 }.bottomGap(BottomGap.NONE)
+
+                row {
+                    val sessionBtn = JToggleButton("My statistics", statsMode == StatsMode.SESSION)
+                    val globalBtn  = JToggleButton("All users statistics", statsMode == StatsMode.GLOBAL)
+                    sessionToggle = sessionBtn
+                    globalToggle  = globalBtn
+
+                    sessionBtn.addActionListener {
+                        statsMode = StatsMode.SESSION
+                        globalBtn.isSelected = false
+                        sessionBtn.isSelected = true
+                        refreshState()
+                    }
+                    globalBtn.addActionListener {
+                        if (!isStatsToggleEnabled()) return@addActionListener
+                        statsMode = StatsMode.GLOBAL
+                        sessionBtn.isSelected = false
+                        globalBtn.isSelected = true
+                        if (globalStats == null && !isLoadingGlobal) fetchGlobalStats()
+                        else refreshState()
+                    }
+
+                    cell(sessionBtn)
+                    cell(globalBtn).gap(RightGap.SMALL)
+
+                    val refreshBtn = JButton("↺").also {
+                        it.toolTipText = "Refresh global statistics"
+                        it.isVisible = statsMode == StatsMode.GLOBAL
+                        it.addActionListener { fetchGlobalStats() }
+                        refreshButton = it
+                    }
+                    cell(refreshBtn).gap(RightGap.SMALL)
+
+                    lastUpdatedLabel = label("").applyToComponent {
+                        font = UIUtil.getLabelFont().deriveFont(Font.PLAIN, 10f)
+                        foreground = UIUtil.getContextHelpForeground()
+                    }.component
+                }
             }
 
         }.also { panel ->
@@ -236,6 +241,10 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
     }
 
     // ── Global stats fetch ────────────────────────────────────────────────────
+
+    /** Returns true if the telemetry checkbox is currently checked (even before Apply). */
+    private fun isStatsToggleEnabled(): Boolean =
+        telemetryCheckbox?.isSelected ?: McpCompanionSettings.getInstance().isTelemetryEnabled()
 
     private fun fetchGlobalStats() {
         if (isLoadingGlobal) return
@@ -388,10 +397,14 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
             row.bar.repaint()
         }
 
-        // Toggle state
+        // Toggle state + grayed when telemetry disabled
+        val statsEnabled = isStatsToggleEnabled()
         sessionToggle?.isSelected = statsMode == StatsMode.SESSION
+        sessionToggle?.isEnabled  = statsEnabled
         globalToggle?.isSelected  = statsMode == StatsMode.GLOBAL
+        globalToggle?.isEnabled   = statsEnabled
         refreshButton?.isVisible  = statsMode == StatsMode.GLOBAL
+        refreshButton?.isEnabled  = statsEnabled && !isLoadingGlobal
 
         // Last-updated label
         if (statsMode == StatsMode.GLOBAL && !isLoadingGlobal) {
