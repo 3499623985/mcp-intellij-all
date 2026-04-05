@@ -36,8 +36,7 @@ class McpCompanionStartupActivity : ProjectActivity {
                     .getNotificationGroup("MCP Server Companion")
                     .createNotification(
                         "MCP Server Companion — Usage Statistics",
-                        "To improve this plugin, anonymous usage statistics are shared " +
-                        "(tool names and call counts only — no code, no file paths, no project data). " +
+                        "To improve this plugin, anonymous usage statistics are shared. " +
                         "You can change this anytime in Settings → Tools → MCP Server Companion.",
                         NotificationType.INFORMATION
                     )
