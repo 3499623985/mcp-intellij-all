@@ -181,7 +181,14 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
                         )
                         .applyToComponent {
                             telemetryCheckbox = this
-                            addActionListener { refreshState() }
+                            addActionListener {
+                                if (!isSelected) {
+                                    statsMode = StatsMode.SESSION
+                                    sessionToggle?.isSelected = true
+                                    globalToggle?.isSelected = false
+                                }
+                                refreshState()
+                            }
                         }
                 }
                 row {
