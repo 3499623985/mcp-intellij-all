@@ -1,8 +1,9 @@
 package io.nimbly.mcpcompanion
 
+import com.intellij.notification.Notification
+import com.intellij.notification.NotificationAction
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
-import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
@@ -40,14 +41,16 @@ class McpCompanionStartupActivity : ProjectActivity {
                         "To improve this plugin, anonymous usage statistics are shared.",
                         NotificationType.INFORMATION
                     )
-                    .addAction(object : AnAction("OK, got it") {
-                        override fun actionPerformed(e: AnActionEvent) {
+                    .addAction(object : NotificationAction("OK, got it") {
+                        override fun actionPerformed(e: AnActionEvent, notification: Notification) {
                             ourSettings.setTelemetryEnabled(true)
+                            notification.expire()
                         }
                     })
-                    .addAction(object : AnAction("Disable sharing") {
-                        override fun actionPerformed(e: AnActionEvent) {
+                    .addAction(object : NotificationAction("Disable sharing") {
+                        override fun actionPerformed(e: AnActionEvent, notification: Notification) {
                             ourSettings.setTelemetryEnabled(false)
+                            notification.expire()
                         }
                     })
                     .notify(project)
