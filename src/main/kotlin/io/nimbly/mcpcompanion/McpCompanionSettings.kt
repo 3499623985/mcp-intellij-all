@@ -15,6 +15,10 @@ class McpCompanionSettings : PersistentStateComponent<McpCompanionSettings.State
         var enabledTools: MutableMap<String, Boolean> = mutableMapOf()
         @JvmField
         var firstLaunchDone: Boolean = false
+        @JvmField
+        var telemetryEnabled: Boolean = false
+        @JvmField
+        var anonymousId: String = java.util.UUID.randomUUID().toString()
     }
 
     private var myState = State()
@@ -28,11 +32,19 @@ class McpCompanionSettings : PersistentStateComponent<McpCompanionSettings.State
         myState.enabledTools[toolName] = enabled
     }
 
+    fun isTelemetryEnabled(): Boolean = myState.telemetryEnabled
+    fun setTelemetryEnabled(enabled: Boolean) { myState.telemetryEnabled = enabled }
+    fun getAnonymousId(): String = myState.anonymousId
+
     // In-memory call counts — reset on every IDE restart
     private val callCounts = mutableMapOf<String, Int>()
 
-    fun trackCall(name: String) { callCounts[name] = (callCounts[name] ?: 0) + 1 }
+    fun trackCall(name: String) {
+        callCounts[name] = (callCounts[name] ?: 0) + 1
+        McpCompanionTelemetry.trackIfEnabled(name)
+    }
     fun getCallCount(name: String): Int = callCounts[name] ?: 0
+    fun getAllCallCounts(): Map<String, Int> = callCounts.toMap()
     fun maxCallCount(): Int = callCounts.values.maxOrNull() ?: 0
 
     companion object {

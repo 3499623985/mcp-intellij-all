@@ -2,6 +2,7 @@ package io.nimbly.mcpcompanion
 
 import com.intellij.mcpserver.annotations.McpDescription
 import com.intellij.mcpserver.annotations.McpTool
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.command.WriteCommandAction
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.fileEditor.FileEditorManager
@@ -24,12 +25,26 @@ import java.awt.RenderingHints
 import java.awt.Toolkit
 import java.awt.datatransfer.StringSelection
 import java.awt.event.HierarchyEvent
+import javax.swing.JButton
 import javax.swing.JCheckBox
 import javax.swing.JLabel
 import javax.swing.JPanel
+import javax.swing.JToggleButton
+import javax.swing.SwingUtilities
 import javax.swing.Timer
 
 class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
+
+    private enum class StatsMode { SESSION, GLOBAL }
+    private var statsMode = StatsMode.SESSION
+    private var globalStats: Map<String, Int>? = null
+    private var globalStatsLoadedAt: Long = 0L
+    private var isLoadingGlobal = false
+
+    private var sessionToggle: JToggleButton? = null
+    private var globalToggle: JToggleButton? = null
+    private var refreshButton: JButton? = null
+    private var lastUpdatedLabel: JLabel? = null
 
     private val toolCheckboxes = mutableListOf<JCheckBox>()
     private val descriptionLabels = mutableListOf<JLabel>()
@@ -39,7 +54,7 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
     private data class UsageRow(val toolName: String, val bar: UsageBarPanel)
     private val usageRows = mutableListOf<UsageRow>()
 
-    private inner class UsageBarPanel(val toolName: String) : JPanel() {
+    private inner class UsageBarPanel(val toolName: String, val countProvider: () -> Int) : JPanel() {
         var scale: Int = 10
         init {
             preferredSize = Dimension(BAR_W + COUNT_W, 18)
@@ -47,8 +62,7 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
         }
         override fun paintComponent(g: Graphics) {
             super.paintComponent(g)
-            val settings = McpCompanionSettings.getInstance()
-            val count = settings.getCallCount(toolName)
+            val count = countProvider()
             val g2 = g as Graphics2D
             g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
             val fg = UIUtil.getLabelForeground()
@@ -117,6 +131,44 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
                 }
             }
 
+            // ── Usage stats toggle ────────────────────────────────────────────
+            row {
+                val sessionBtn = JToggleButton("Ma session", statsMode == StatsMode.SESSION)
+                val globalBtn  = JToggleButton("Tous les utilisateurs", statsMode == StatsMode.GLOBAL)
+                sessionToggle = sessionBtn
+                globalToggle  = globalBtn
+
+                sessionBtn.addActionListener {
+                    statsMode = StatsMode.SESSION
+                    globalBtn.isSelected = false
+                    sessionBtn.isSelected = true
+                    refreshState()
+                }
+                globalBtn.addActionListener {
+                    statsMode = StatsMode.GLOBAL
+                    sessionBtn.isSelected = false
+                    globalBtn.isSelected = true
+                    if (globalStats == null && !isLoadingGlobal) fetchGlobalStats()
+                    else refreshState()
+                }
+
+                cell(sessionBtn)
+                cell(globalBtn).gap(RightGap.SMALL)
+
+                val refreshBtn = JButton("↺").also {
+                    it.toolTipText = "Refresh global statistics"
+                    it.isVisible = statsMode == StatsMode.GLOBAL
+                    it.addActionListener { fetchGlobalStats() }
+                    refreshButton = it
+                }
+                cell(refreshBtn).gap(RightGap.SMALL)
+
+                lastUpdatedLabel = label("").applyToComponent {
+                    font = UIUtil.getLabelFont().deriveFont(Font.PLAIN, 10f)
+                    foreground = UIUtil.getContextHelpForeground()
+                }.component
+            }.bottomGap(BottomGap.NONE)
+
             McpCompanionSettings.TOOL_GROUPS.forEach { (groupName, toolNames) ->
                 group(groupName) {
                     toolNames.forEach { name ->
@@ -136,7 +188,12 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
                                     toolTipText = tooltip
                                 }
                                 .gap(RightGap.SMALL)
-                            val bar = UsageBarPanel(name)
+                            val bar = UsageBarPanel(name) {
+                                when (statsMode) {
+                                    StatsMode.SESSION -> settings.getCallCount(name)
+                                    StatsMode.GLOBAL  -> globalStats?.get(name) ?: 0
+                                }
+                            }
                             usageRows += UsageRow(name, bar)
                             cell(bar).applyToComponent {
                                 toolTipText = buildUsageTooltip(name)
@@ -150,12 +207,54 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
                     }
                 }
             }
+
+            // ── Analytics opt-in ──────────────────────────────────────────────
+            group("Analytics") {
+                row {
+                    checkBox("Share anonymous usage statistics")
+                        .bindSelected(
+                            getter = { settings.isTelemetryEnabled() },
+                            setter = { settings.setTelemetryEnabled(it) }
+                        )
+                }
+                row {
+                    comment(
+                        "Sends tool name + call count anonymously on each tool use. " +
+                        "No code, no file paths, no project data. Required to view global statistics above."
+                    )
+                }.bottomGap(BottomGap.NONE)
+            }
+
         }.also { panel ->
             panel.addHierarchyListener { e ->
                 if (e.changeFlags and HierarchyEvent.SHOWING_CHANGED.toLong() != 0L) {
                     if (panel.isShowing) { refreshState(); refreshTimer.start() }
                     else refreshTimer.stop()
                 }
+            }
+        }
+    }
+
+    // ── Global stats fetch ────────────────────────────────────────────────────
+
+    private fun fetchGlobalStats() {
+        if (isLoadingGlobal) return
+        isLoadingGlobal = true
+        refreshButton?.isEnabled = false
+        lastUpdatedLabel?.text = "Loading…"
+
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val stats = McpCompanionTelemetry.fetchGlobalStats()
+            SwingUtilities.invokeLater {
+                isLoadingGlobal = false
+                refreshButton?.isEnabled = true
+                if (stats != null) {
+                    globalStats = stats
+                    globalStatsLoadedAt = System.currentTimeMillis()
+                } else {
+                    lastUpdatedLabel?.text = "Failed to load"
+                }
+                refreshState()
             }
         }
     }
@@ -188,9 +287,21 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
     private fun java.awt.Color.toHex() = "#%02x%02x%02x".format(red, green, blue)
 
     private fun buildUsageTooltip(toolName: String): String {
-        val count = McpCompanionSettings.getInstance().getCallCount(toolName)
-        return if (count == 0) "Not called since IDE launch"
-        else "$count call${if (count > 1) "s" else ""} since IDE launch"
+        return when (statsMode) {
+            StatsMode.SESSION -> {
+                val count = McpCompanionSettings.getInstance().getCallCount(toolName)
+                if (count == 0) "Not called since IDE launch"
+                else "$count call${if (count > 1) "s" else ""} since IDE launch"
+            }
+            StatsMode.GLOBAL -> {
+                val count = globalStats?.get(toolName)
+                when {
+                    globalStats == null -> "Global stats not loaded yet"
+                    count == null || count == 0 -> "No calls recorded"
+                    else -> "$count total call${if (count > 1) "s" else ""} across all users"
+                }
+            }
+        }
     }
 
     // ── Button actions ────────────────────────────────────────────────────────
@@ -264,12 +375,35 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
         val mcpEnabled = isMcpServerEnabled()
         toolCheckboxes.forEach { it.isEnabled = mcpEnabled }
         descriptionLabels.forEach { it.isEnabled = mcpEnabled }
-        val maxCalls = McpCompanionSettings.getInstance().maxCallCount()
+
+        // Scale bars to current data source
+        val maxCalls = when (statsMode) {
+            StatsMode.SESSION -> McpCompanionSettings.getInstance().maxCallCount()
+            StatsMode.GLOBAL  -> globalStats?.values?.maxOrNull() ?: 0
+        }
         val scale = if (maxCalls <= 0) 10 else ((maxCalls + 9) / 10) * 10
         usageRows.forEach { row ->
             row.bar.scale = scale
             row.bar.toolTipText = buildUsageTooltip(row.toolName)
             row.bar.repaint()
+        }
+
+        // Toggle state
+        sessionToggle?.isSelected = statsMode == StatsMode.SESSION
+        globalToggle?.isSelected  = statsMode == StatsMode.GLOBAL
+        refreshButton?.isVisible  = statsMode == StatsMode.GLOBAL
+
+        // Last-updated label
+        if (statsMode == StatsMode.GLOBAL && !isLoadingGlobal) {
+            lastUpdatedLabel?.text = when {
+                globalStats == null -> ""
+                else -> {
+                    val ago = (System.currentTimeMillis() - globalStatsLoadedAt) / 1000
+                    if (ago < 60) "Updated ${ago}s ago" else "Updated ${ago / 60}min ago"
+                }
+            }
+        } else if (statsMode == StatsMode.SESSION) {
+            lastUpdatedLabel?.text = ""
         }
     }
 
