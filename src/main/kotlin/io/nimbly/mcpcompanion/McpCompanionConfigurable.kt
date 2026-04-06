@@ -108,30 +108,6 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
                 label("<html><b>Example:</b> <i>\"Add a breakpoint at line 18, start the debugger, stop when i == 3, then tell me the value of jj.\"</i></html>")
             }.bottomGap(BottomGap.NONE)
 
-            group("Claude Code Setup") {
-                row {
-                    button("Add to CLAUDE.md") { addClaudeMd() }
-                        .comment("Adds a one-liner to CLAUDE.md in the current project so Claude calls get_mcp_companion_overview on startup")
-                }
-                row {
-                    comment("""To skip permission prompts, add <code>"mcp__intellij__*"</code> to the <code>permissions.allow</code> array in <code>~/.claude/settings.json</code> and restart Claude Code:""")
-                }
-                row {
-                    val snippet = """  "permissions": { "allow": ["mcp__intellij__*"] }"""
-                    textField()
-                        .applyToComponent {
-                            text = snippet
-                            isEditable = false
-                            columns = 52
-                            font = Font(Font.MONOSPACED, Font.PLAIN, 11)
-                        }
-                    button("Copy") {
-                        Toolkit.getDefaultToolkit().systemClipboard
-                            .setContents(StringSelection(snippet.trim()), null)
-                    }
-                }
-            }
-
             McpCompanionSettings.TOOL_GROUPS.forEach { (groupName, toolNames) ->
                 group(groupName) {
                     toolNames.forEach { name ->
@@ -234,6 +210,30 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
                         font = UIUtil.getLabelFont().deriveFont(Font.PLAIN, 10f)
                         foreground = UIUtil.getContextHelpForeground()
                     }.component
+                }
+            }
+
+            group("Claude Code Setup") {
+                row {
+                    button("Add to CLAUDE.md") { addClaudeMd() }
+                        .comment("Adds a one-liner to CLAUDE.md in the current project so Claude calls get_mcp_companion_overview on startup")
+                }
+                row {
+                    comment("""To skip permission prompts, add <code>"mcp__intellij__*"</code> to the <code>permissions.allow</code> array in <code>~/.claude/settings.json</code> and restart Claude Code:""")
+                }
+                row {
+                    val snippet = """  "permissions": { "allow": ["mcp__intellij__*"] }"""
+                    textField()
+                        .applyToComponent {
+                            text = snippet
+                            isEditable = false
+                            columns = 52
+                            font = Font(Font.MONOSPACED, Font.PLAIN, 11)
+                        }
+                    button("Copy") {
+                        Toolkit.getDefaultToolkit().systemClipboard
+                            .setContents(StringSelection(snippet.trim()), null)
+                    }
                 }
             }
 
