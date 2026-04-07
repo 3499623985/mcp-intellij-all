@@ -46,6 +46,7 @@ intellijPlatform {
         }
         changeNotes = """
             <ul>
+                <li><b>2.5.0</b> — New Database tools (IntelliJ IDEA Ultimate): <code>list_database_sources</code> lists configured data sources with URL, driver, and user; <code>get_database_schema</code> returns the full introspected schema tree — namespaces, tables, views, columns with types, primary keys, foreign keys, and indexes; <code>execute_database_query</code> executes any SQL query and returns results as JSON (disabled by default). All implemented via reflection through the Database plugin classloader — no compile dependency. Settings UI greys out Database tools when the plugin is not installed.</li>
                 <li><b>2.4.0</b> — New: usage statistics in Settings. See which tools you use most, or compare with all users worldwide. A one-time notification lets you opt out at any time.</li>
                 <li><b>2.3.0</b> — New tool: <code>send_to_terminal</code> — executes a shell command in the embedded Terminal (disabled by default). <code>send_to_terminal</code> and <code>delete_file</code> are now disabled by default for safety; disabled-by-default tools show a clear message asking the user to enable them in Settings.</li>
                 <li><b>2.2.0</b> — New tool: <code>get_terminal_output</code> — returns the visible content of all tabs in the embedded Terminal tool window.</li>
