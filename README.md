@@ -152,6 +152,17 @@ Add the JetBrains MCP proxy to your AI client config (e.g. `claude_desktop_confi
 ./gradlew test          # Run automated tests (headless, ~3s)
 ```
 
+## Telemetry backend
+
+The anonymous usage tracker is a Vercel serverless app in `tracker/`.
+**Vercel auto-deploys on every push to `main`** — no manual deploy needed.
+
+If a new field is added to the telemetry payload:
+1. Update `tracker/api/track.ts` (extract + insert the new field)
+2. Update `tracker/schema.sql` (add column in `CREATE TABLE` + `ALTER TABLE` migration)
+3. Run the `ALTER TABLE` migration manually in **Vercel → Storage → your DB → Query**
+4. Push → Vercel redeploys automatically
+
 ## License
 
 MIT

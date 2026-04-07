@@ -77,6 +77,7 @@ Tout appel par réflexion (`Class.forName`, `getDeclaredField`, `getMethod`, etc
 - `locale` → `Locale.getDefault().toLanguageTag()`
 - Schema DB dans `tracker/schema.sql` — contient aussi les `ALTER TABLE` de migration
 - ⚠️ Si on ajoute un champ au payload : mettre à jour `tracker/api/track.ts` **ET** `tracker/schema.sql` (CREATE TABLE + ALTER TABLE migration), puis exécuter la migration dans **Vercel → Storage → ta DB → Query**
+- 🚀 **Vercel se déploie automatiquement à chaque push sur `main`** — pas de commande `vercel` à lancer
 
 ## Workflow de développement
 
