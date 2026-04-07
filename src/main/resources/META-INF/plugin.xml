@@ -61,6 +61,14 @@
             <li><b>manage_process</b> — Pauses, resumes, or cancels a background process by title.</li>
         </ul>
 
+        <h4>Database</h4>
+        <p><em>Requires the Database Tools and SQL plugin (IntelliJ IDEA Ultimate).</em></p>
+        <ul>
+            <li><b>list_database_sources</b> — Lists all data sources configured in the Database tool window (name, URL, driver, user, DBMS type).</li>
+            <li><b>get_database_schema</b> — Returns the schema tree already introspected by IntelliJ: namespaces → tables/views with keys, foreign keys, indexes, and optionally columns.</li>
+            <li><b>execute_database_query</b> — Executes a SQL query on a configured data source and returns the results as JSON. ⚠ Disabled by default — can execute UPDATE, DELETE, DROP.</li>
+        </ul>
+
         <h4>General</h4>
         <ul>
             <li><b>get_mcp_companion_overview</b> — Describes all available MCP Companion tools and how to use them.</li>
@@ -102,5 +110,6 @@
         <mcpToolset implementation="io.nimbly.mcpcompanion.McpCompanionDebugToolset"/>
         <mcpToolset implementation="io.nimbly.mcpcompanion.McpCompanionDiagnosticToolset"/>
         <mcpToolset implementation="io.nimbly.mcpcompanion.McpCompanionCodeAnalysisToolset"/>
+        <mcpToolset implementation="io.nimbly.mcpcompanion.McpCompanionDatabaseToolset"/>
     </extensions>
 </idea-plugin>

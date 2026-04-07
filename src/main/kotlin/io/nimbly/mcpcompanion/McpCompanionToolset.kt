@@ -96,6 +96,17 @@ class McpCompanionToolset : McpToolset {
                            use after modifying build.gradle, pom.xml, or when dependencies drift
 - get_project_structure  → list modules, SDK, source roots, dependencies — call this first on a new project
 
+### Database (requires Database Tools plugin — IntelliJ IDEA Ultimate)
+- list_database_sources   → list all configured data sources (name, URL, driver, user, dbms)
+                            call this first to discover which data source to use
+- get_database_schema     → schema tree already introspected by IntelliJ: namespaces → tables/views → columns + keys + FK + indexes
+                            includeColumns=false (default) → tables only; includeColumns=true → full column details
+                            ⚠ returns empty tree if the DB hasn't been connected/refreshed in IntelliJ yet
+- execute_database_query  → execute a SQL query on a data source, returns JSON with columns + rows
+                            ⚠ disabled by default — ask user to enable in Settings first
+                            dataSource="" → auto-selected if only one source exists
+                            maxRows=100 (default) → limit result rows
+
 ### General
 - get_mcp_companion_overview → this overview
 - execute_ide_action         → execute any IntelliJ action by ID, or search for action IDs by keyword

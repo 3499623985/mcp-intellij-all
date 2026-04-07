@@ -48,6 +48,8 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
     private var telemetryCheckbox: JCheckBox? = null
 
     private val toolCheckboxes = mutableListOf<JCheckBox>()
+    /** Checkboxes whose tool requires an optional plugin that is not currently installed. */
+    private val pluginUnavailableCheckboxes = mutableSetOf<JCheckBox>()
     private val descriptionLabels = mutableListOf<JLabel>()
     private var warningLabel: JLabel? = null
     private val refreshTimer = Timer(300) { refreshState() }
@@ -93,6 +95,7 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
     override fun createPanel(): DialogPanel {
         val settings = McpCompanionSettings.getInstance()
         toolCheckboxes.clear()
+        pluginUnavailableCheckboxes.clear()
         descriptionLabels.clear()
         usageRows.clear()
 
@@ -123,8 +126,15 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
                                     preferredSize = Dimension(maxCbWidth, preferredSize.height)
                                     minimumSize = Dimension(maxCbWidth, minimumSize.height)
                                     toolCheckboxes.add(this)
-                                    isEnabled = isMcpServerEnabled()
-                                    toolTipText = tooltip
+                                    val pluginAvailable = McpCompanionSettings.isPluginAvailable(name)
+                                    if (!pluginAvailable) {
+                                        pluginUnavailableCheckboxes.add(this)
+                                        toolTipText = "<html>Requires the <b>Database Tools and SQL</b> plugin<br>" +
+                                            "(available in IntelliJ IDEA Ultimate)</html>"
+                                    } else {
+                                        toolTipText = tooltip
+                                    }
+                                    isEnabled = isMcpServerEnabled() && pluginAvailable
                                 }
                                 .gap(RightGap.SMALL)
                             val bar = UsageBarPanel(name) {
@@ -278,7 +288,7 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
     // ── Descriptions via reflection on @McpDescription ───────────────────────
 
     private fun rawDescription(toolName: String): String? = try {
-        val toolsetClasses = listOf(McpCompanionToolset::class.java, McpCompanionEditorToolset::class.java, McpCompanionBuildToolset::class.java, McpCompanionDebugToolset::class.java, McpCompanionDiagnosticToolset::class.java, McpCompanionCodeAnalysisToolset::class.java)
+        val toolsetClasses = listOf(McpCompanionToolset::class.java, McpCompanionEditorToolset::class.java, McpCompanionBuildToolset::class.java, McpCompanionDebugToolset::class.java, McpCompanionDiagnosticToolset::class.java, McpCompanionCodeAnalysisToolset::class.java, McpCompanionDatabaseToolset::class.java)
         toolsetClasses.firstNotNullOfOrNull { cls ->
             cls.methods
                 .find { it.getAnnotation(McpTool::class.java)?.name == toolName }
@@ -389,7 +399,9 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
     private fun refreshState() {
         updateWarning()
         val mcpEnabled = isMcpServerEnabled()
-        toolCheckboxes.forEach { it.isEnabled = mcpEnabled }
+        toolCheckboxes.forEach { cb ->
+            cb.isEnabled = mcpEnabled && cb !in pluginUnavailableCheckboxes
+        }
         descriptionLabels.forEach { it.isEnabled = mcpEnabled }
 
         // Scale bars to current data source

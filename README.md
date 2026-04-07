@@ -55,6 +55,13 @@ An IntelliJ IDEA plugin that extends the built-in [JetBrains MCP Server](https:/
 | `refresh_project` 🔬 | Sync Gradle or Maven build system — detects the build tool automatically from the project root |
 | `get_project_structure` | Returns SDK, modules, source roots, excluded folders, and module dependencies |
 
+### Database *(requires Database Tools and SQL plugin — IntelliJ IDEA Ultimate)*
+| Tool | Description |
+|------|-------------|
+| `list_database_sources` | Lists all configured data sources (name, URL, driver, user, DBMS) — call this first to discover available sources |
+| `get_database_schema` | Schema tree already introspected by IntelliJ: namespaces → tables/views with keys, FK, indexes, and optionally columns |
+| `execute_database_query` 🔒 | Executes a SQL query on a data source, returns JSON with columns + rows (or affected row count for DML) |
+
 ### General
 | Tool | Description |
 |------|-------------|

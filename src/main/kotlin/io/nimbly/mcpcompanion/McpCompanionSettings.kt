@@ -56,7 +56,7 @@ class McpCompanionSettings : PersistentStateComponent<McpCompanionSettings.State
     companion object {
 
         /** Tools disabled by default — higher risk, require explicit opt-in in Settings. */
-        val DISABLED_BY_DEFAULT = setOf("send_to_terminal", "delete_file")
+        val DISABLED_BY_DEFAULT = setOf("send_to_terminal", "delete_file", "execute_database_query")
 
         val TOOL_GROUPS = linkedMapOf(
             "Editor & Navigation" to listOf(
@@ -75,10 +75,32 @@ class McpCompanionSettings : PersistentStateComponent<McpCompanionSettings.State
             "Code Analysis" to listOf(
                 "get_file_problems", "get_quick_fixes", "refresh_project", "get_project_structure"
             ),
+            "Database" to listOf(
+                "list_database_sources", "get_database_schema", "execute_database_query"
+            ),
             "General" to listOf(
                 "get_mcp_companion_overview", "execute_ide_action", "replace_text_undoable", "delete_file"
             )
         )
+
+        /**
+         * Maps tool names to the IntelliJ plugin ID required for the tool to work.
+         * Used by the Settings UI to grey out tools when their required plugin is not installed.
+         */
+        val TOOL_REQUIRED_PLUGIN: Map<String, String> = mapOf(
+            "list_database_sources"   to "com.intellij.database",
+            "get_database_schema"     to "com.intellij.database",
+            "execute_database_query"  to "com.intellij.database"
+        )
+
+        /** Returns true if the optional plugin required by this tool is installed and enabled. */
+        fun isPluginAvailable(toolName: String): Boolean {
+            val pluginId = TOOL_REQUIRED_PLUGIN[toolName] ?: return true
+            return try {
+                val id = com.intellij.openapi.extensions.PluginId.getId(pluginId)
+                com.intellij.ide.plugins.PluginManagerCore.getPlugin(id)?.pluginClassLoader != null
+            } catch (_: Exception) { false }
+        }
 
         fun getInstance(): McpCompanionSettings =
             ApplicationManager.getApplication().getService(McpCompanionSettings::class.java)
