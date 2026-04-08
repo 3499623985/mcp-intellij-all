@@ -107,6 +107,12 @@ class McpCompanionToolset : McpToolset {
                             dataSource="" → auto-selected if only one source exists
                             maxRows=100 (default) → limit result rows
 
+### VCS
+- get_vcs_changes(includeDiff=false) — modified/added/deleted/moved files; includeDiff=true adds unified diff per file
+- get_vcs_branch() — current branch + local/remote branches (Git)
+- get_vcs_log(maxCount=20, file="", branch="") — recent commits with hash, author, date, subject, files changed (Git)
+- get_vcs_blame(filePath, startLine=1, endLine=MAX) — line-by-line annotation: author, date, revision per line
+
 ### General
 - get_mcp_companion_overview → this overview
 - execute_ide_action         → execute any IntelliJ action by ID, or search for action IDs by keyword

@@ -62,6 +62,14 @@ An IntelliJ IDEA plugin that extends the built-in [JetBrains MCP Server](https:/
 | `get_database_schema` | Schema tree already introspected by IntelliJ: namespaces → tables/views with keys, FK, indexes, and optionally columns |
 | `execute_database_query` 🔒 | Executes a SQL query on a data source, returns JSON with columns + rows (or affected row count for DML) |
 
+### VCS
+| Tool | Description |
+|------|-------------|
+| `get_vcs_changes` | All locally modified, added, deleted, and moved files (any VCS). Pass `includeDiff=true` to include a unified diff per file |
+| `get_vcs_branch` | Current branch and all local/remote branches for each Git repository |
+| `get_vcs_log` | Recent commit history: hash, author, date, subject, and changed files. Filter by file or branch (Git) |
+| `get_vcs_blame` | Line-by-line blame annotation: who last modified each line, when, and in which commit (any VCS) |
+
 ### General
 | Tool | Description |
 |------|-------------|

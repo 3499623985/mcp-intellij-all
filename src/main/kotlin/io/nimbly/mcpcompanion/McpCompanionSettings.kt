@@ -78,6 +78,9 @@ class McpCompanionSettings : PersistentStateComponent<McpCompanionSettings.State
             "Database" to listOf(
                 "list_database_sources", "get_database_schema", "execute_database_query"
             ),
+            "VCS" to listOf(
+                "get_vcs_changes", "get_vcs_branch", "get_vcs_log", "get_vcs_blame"
+            ),
             "General" to listOf(
                 "get_mcp_companion_overview", "execute_ide_action", "replace_text_undoable", "delete_file"
             )

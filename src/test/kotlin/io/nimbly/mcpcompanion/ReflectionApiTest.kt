@@ -502,4 +502,162 @@ class ReflectionApiTest {
             "${connCls.simpleName}.createStatement() not found — query execution is broken")
         println("OK: ${connCls.simpleName}.createStatement() found")
     }
+
+    // ── VCS / Git4Idea reflection (McpCompanionVcsToolset) ────────────────────
+    // Git4Idea is bundled in all IntelliJ IDEA editions — tests are BLOCKING when the plugin is present.
+    // If absent (e.g. Android Studio without Git plugin) → skip with INFO.
+    // Platform VCS classes (ChangeListManager, ProjectLevelVcsManager, FileAnnotation, etc.) are
+    // always on the compile classpath via local(...) — tested via direct Class.forName().
+
+    @Test
+    fun `ChangeListManager getInstance and getAllChanges exist`() {
+        val cls = Class.forName("com.intellij.openapi.vcs.changes.ChangeListManager")
+        val getInstance = cls.getMethod("getInstance", com.intellij.openapi.project.Project::class.java)
+        assertTrue(java.lang.reflect.Modifier.isStatic(getInstance.modifiers),
+            "ChangeListManager.getInstance(Project) must be static")
+        assertNotNull(cls.methods.firstOrNull { it.name == "getAllChanges" && it.parameterCount == 0 },
+            "ChangeListManager.getAllChanges() not found — get_vcs_changes is broken")
+        assertNotNull(cls.methods.firstOrNull { it.name == "getUnversionedFilesPaths" && it.parameterCount == 0 },
+            "ChangeListManager.getUnversionedFilesPaths() not found — get_vcs_changes unversioned list is broken")
+        println("OK: ChangeListManager.getInstance / getAllChanges / getUnversionedFilesPaths found")
+    }
+
+    @Test
+    fun `Change getType getBeforeRevision getAfterRevision exist`() {
+        val cls = Class.forName("com.intellij.openapi.vcs.changes.Change")
+        for (name in listOf("getType", "getBeforeRevision", "getAfterRevision")) {
+            assertNotNull(cls.methods.firstOrNull { it.name == name && it.parameterCount == 0 },
+                "Change.$name() not found — get_vcs_changes is broken")
+            println("OK: Change.$name() found")
+        }
+    }
+
+    @Test
+    fun `Change Type enum values MODIFICATION NEW DELETED MOVED exist`() {
+        val cls = Class.forName("com.intellij.openapi.vcs.changes.Change\$Type")
+        for (name in listOf("MODIFICATION", "NEW", "DELETED", "MOVED")) {
+            assertNotNull(runCatching { cls.getField(name) }.getOrNull(),
+                "Change.Type.$name not found — get_vcs_changes type classification is broken")
+            println("OK: Change.Type.$name found")
+        }
+    }
+
+    @Test
+    fun `ContentRevision getContent and getFile exist`() {
+        val cls = Class.forName("com.intellij.openapi.vcs.changes.ContentRevision")
+        for (name in listOf("getContent", "getFile")) {
+            assertNotNull(cls.methods.firstOrNull { it.name == name && it.parameterCount == 0 },
+                "ContentRevision.$name() not found — get_vcs_changes diff generation is broken")
+            println("OK: ContentRevision.$name() found")
+        }
+    }
+
+    @Test
+    fun `ProjectLevelVcsManager getInstance and getVcsFor exist`() {
+        val cls = Class.forName("com.intellij.openapi.vcs.ProjectLevelVcsManager")
+        val getInstance = cls.methods.firstOrNull { it.name == "getInstance" }
+        assertNotNull(getInstance, "ProjectLevelVcsManager.getInstance() not found — get_vcs_blame is broken")
+        println("OK: ProjectLevelVcsManager.getInstance() found")
+        val getVcsFor = cls.methods.firstOrNull { it.name == "getVcsFor" && it.parameterCount == 1 }
+        assertNotNull(getVcsFor, "ProjectLevelVcsManager.getVcsFor(VirtualFile) not found — get_vcs_blame is broken")
+        println("OK: ProjectLevelVcsManager.getVcsFor() found")
+    }
+
+    @Test
+    fun `AbstractVcs getAnnotationProvider exists`() {
+        val cls = Class.forName("com.intellij.openapi.vcs.AbstractVcs")
+        assertNotNull(cls.methods.firstOrNull { it.name == "getAnnotationProvider" && it.parameterCount == 0 },
+            "AbstractVcs.getAnnotationProvider() not found — get_vcs_blame is broken")
+        println("OK: AbstractVcs.getAnnotationProvider() found")
+    }
+
+    @Test
+    fun `FileAnnotation key methods exist`() {
+        val cls = Class.forName("com.intellij.openapi.vcs.annotate.FileAnnotation")
+        for (name in listOf("getLineCount", "getAspects", "getLineRevisionNumber", "getLineDate", "getToolTip", "close")) {
+            assertNotNull(cls.methods.firstOrNull { it.name == name },
+                "FileAnnotation.$name() not found — get_vcs_blame is broken")
+            println("OK: FileAnnotation.$name() found")
+        }
+    }
+
+    @Test
+    fun `LineAnnotationAspect constants AUTHOR DATE REVISION exist`() {
+        val cls = Class.forName("com.intellij.openapi.vcs.annotate.LineAnnotationAspect")
+        for (name in listOf("AUTHOR", "DATE", "REVISION")) {
+            assertNotNull(runCatching { cls.getField(name) }.getOrNull(),
+                "LineAnnotationAspect.$name constant not found — get_vcs_blame aspect lookup is broken")
+            println("OK: LineAnnotationAspect.$name found")
+        }
+        assertNotNull(cls.methods.firstOrNull { it.name == "getValue" && it.parameterCount == 1 },
+            "LineAnnotationAspect.getValue(int) not found — get_vcs_blame aspect value retrieval is broken")
+        println("OK: LineAnnotationAspect.getValue(int) found")
+    }
+
+    /** Returns Git4Idea classloader, or null if not installed. */
+    private fun git4ideaClassLoader(): ClassLoader? =
+        runCatching {
+            val id = com.intellij.openapi.extensions.PluginId.getId("Git4Idea")
+            com.intellij.ide.plugins.PluginManagerCore.getPlugin(id)?.pluginClassLoader
+        }.getOrNull()
+
+    @Test
+    fun `Git4Idea GitRepositoryManager getInstance and getRepositories exist`() {
+        val cl = git4ideaClassLoader() ?: return println("INFO: Git4Idea not available — skipping")
+        val cls = cl.loadClass("git4idea.repo.GitRepositoryManager")
+        val getInstance = cls.getMethod("getInstance", com.intellij.openapi.project.Project::class.java)
+        assertTrue(java.lang.reflect.Modifier.isStatic(getInstance.modifiers),
+            "GitRepositoryManager.getInstance(Project) must be static")
+        assertNotNull(cls.methods.firstOrNull { it.name == "getRepositories" && it.parameterCount == 0 },
+            "GitRepositoryManager.getRepositories() not found — get_vcs_branch and get_vcs_log are broken")
+        println("OK: GitRepositoryManager.getInstance / getRepositories found")
+    }
+
+    @Test
+    fun `Git4Idea GitRepository getCurrentBranch and getBranches exist`() {
+        val cl = git4ideaClassLoader() ?: return println("INFO: Git4Idea not available — skipping")
+        val cls = cl.loadClass("git4idea.repo.GitRepository")
+        for (name in listOf("getCurrentBranch", "getBranches", "getRoot")) {
+            assertNotNull(cls.methods.firstOrNull { it.name == name && it.parameterCount == 0 },
+                "GitRepository.$name() not found — get_vcs_branch is broken")
+            println("OK: GitRepository.$name() found")
+        }
+    }
+
+    @Test
+    fun `Git4Idea GitBranchesCollection getLocalBranches and getRemoteBranches exist`() {
+        val cl = git4ideaClassLoader() ?: return println("INFO: Git4Idea not available — skipping")
+        val cls = cl.loadClass("git4idea.branch.GitBranchesCollection")
+        for (name in listOf("getLocalBranches", "getRemoteBranches")) {
+            assertNotNull(cls.methods.firstOrNull { it.name == name && it.parameterCount == 0 },
+                "GitBranchesCollection.$name() not found — get_vcs_branch branch listing is broken")
+            println("OK: GitBranchesCollection.$name() found")
+        }
+    }
+
+    @Test
+    fun `Git4Idea GitHistoryUtils history method exists`() {
+        val cl = git4ideaClassLoader() ?: return println("INFO: Git4Idea not available — skipping")
+        val cls = cl.loadClass("git4idea.history.GitHistoryUtils")
+        val method = cls.methods.firstOrNull { m ->
+            m.name == "history" && m.parameterCount == 3 &&
+            m.parameterTypes[0] == com.intellij.openapi.project.Project::class.java &&
+            m.parameterTypes[1] == com.intellij.openapi.vfs.VirtualFile::class.java
+        }
+        assertNotNull(method, "GitHistoryUtils.history(Project, VirtualFile, String[]) not found — get_vcs_log is broken")
+        assertTrue(java.lang.reflect.Modifier.isStatic(method!!.modifiers),
+            "GitHistoryUtils.history() must be static")
+        println("OK: GitHistoryUtils.history(Project, VirtualFile, String[]) found")
+    }
+
+    @Test
+    fun `Git4Idea GitCommit getId getAuthor getAuthorTime getSubject getFullMessage getAffectedPaths exist`() {
+        val cl = git4ideaClassLoader() ?: return println("INFO: Git4Idea not available — skipping")
+        val cls = cl.loadClass("git4idea.GitCommit")
+        for (name in listOf("getId", "getAuthor", "getAuthorTime", "getSubject", "getFullMessage", "getAffectedPaths")) {
+            assertNotNull(cls.methods.firstOrNull { it.name == name && it.parameterCount == 0 },
+                "GitCommit.$name() not found — get_vcs_log commit details are broken")
+            println("OK: GitCommit.$name() found")
+        }
+    }
 }
