@@ -5,24 +5,6 @@
     <vendor email="Maxime.HAMM@nimbly-consulting.com" url="https://github.com/maximehamm/mcp-intellij-all">Maxime HAMM</vendor>
 
     <description><![CDATA[
-        <p>
-            <b>MCP Server Companion</b> extends the built-in
-            <a href="https://plugins.jetbrains.com/plugin/26071-mcp-server">JetBrains MCP Server</a>
-            with additional tools for AI clients such as Claude, ChatPGT, Cursor...
-        </p>
-        <p>
-            <b>Requires:</b> the <a href="https://plugins.jetbrains.com/plugin/26071-mcp-server">JetBrains MCP Server</a>
-            plugin to be installed and enabled. It is bundled in IntelliJ IDEA Ultimate 2025.1+.
-        </p>
-        <p>
-            Source code and documentation: <a href="https://github.com/maximehamm/mcp-intellij-all">github.com/maximehamm/mcp-intellij-all</a>
-        </p>
-
-        <h3>Settings</h3>
-        <p>Each tool can be individually enabled or disabled in
-        <b>  Settings → Tools → MCP Server Companion</b>.</p>
-
-        <h3>Available tools</h3>
 
         <h4>Editor &amp; Navigation</h4>
         <ul>
@@ -87,6 +69,16 @@
             <li><i>"Open Main.java and highlight all usages of variable i."</i></li>
             <li><i>"Something is wrong in IntelliJ — run a diagnostic and tell me what you see."</i></li>
         </ul>
+
+        <h3>Settings</h3>
+        <p>Each tool can be individually enabled or disabled in
+        <b>  Settings → Tools → MCP Server Companion</b>.</p>
+
+        <h3>Source code</h3>
+        <p>
+            Source code and documentation: <a href="https://github.com/maximehamm/mcp-intellij-all">github.com/maximehamm/mcp-intellij-all</a>
+        </p>
+
     ]]></description>
 
     <depends>com.intellij.modules.platform</depends>

@@ -3,6 +3,7 @@
 ## High priority
 
 - **get_local_history** — IntelliJ local history for a file (even without git)
+- **get_available_inspections**, **run_inspection**
 
 ## New tools
 
