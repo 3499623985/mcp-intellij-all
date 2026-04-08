@@ -6,6 +6,8 @@
 
     <description><![CDATA[
 
+        Let your AI assistant see what your IDE sees: errors, test results, vcs changes, databases, console output and more...
+
         <h4>Editor &amp; Navigation</h4>
         <ul>
             <li><b>get_open_editors</b> — Open files, focused editor with caret position, and current text selection.</li>
