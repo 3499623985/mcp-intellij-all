@@ -69,6 +69,7 @@ An IntelliJ IDEA plugin that extends the built-in [JetBrains MCP Server](https:/
 | `get_vcs_branch` | Current branch and all local/remote branches for each Git repository |
 | `get_vcs_log` | Recent commit history: hash, author, date, subject, and changed files. Filter by file or branch (Git) |
 | `get_vcs_blame` | Line-by-line blame annotation: who last modified each line, when, and in which commit (any VCS) |
+| `get_local_history` | IntelliJ Local History for a file, directory, or the whole project. Returns timestamped revisions with optional unified diffs |
 
 ### General
 | Tool | Description |

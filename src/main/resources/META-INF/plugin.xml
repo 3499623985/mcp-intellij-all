@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <idea-plugin>
     <id>io.nimbly.mcp-companion</id>
-    <name>MCP Server Companion</name>
+    <name>MCP Server AI Companion</name>
     <vendor email="Maxime.HAMM@nimbly-consulting.com" url="https://github.com/maximehamm/mcp-intellij-all">Maxime HAMM</vendor>
 
     <description><![CDATA[
 
         <p>
-        <b>Let your AI assistant see what your IDE sees: errors, test results, vcs changes, databases, console output and more...</b>
+        <b>Let your AI assistant see what your IDE sees: compilation errors, test results, debug console and variables, vcs changes, databases schema and data...</b>
         </p>
 
         <h4>Editor &amp; Navigation</h4>
@@ -61,6 +61,7 @@
             <li><b>get_vcs_branch</b> — Current branch and all local/remote branches for each Git repository.</li>
             <li><b>get_vcs_log</b> — Recent commit history: hash, author, date, subject, and changed files. Filter by file or branch.</li>
             <li><b>get_vcs_blame</b> — Line-by-line blame annotation: who last modified each line, when, and in which commit (any VCS).</li>
+            <li><b>get_local_history</b> — IntelliJ Local History for a file or directory: revision list with timestamps, labels (e.g. "Before: Rename"), and optional diffs (unified diff for files, added/modified/deleted paths for directories). Without a path, returns recent project-wide change events.</li>
         </ul>
 
         <h4>General</h4>

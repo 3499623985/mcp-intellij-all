@@ -304,12 +304,383 @@ class McpCompanionVcsToolset : McpToolset {
         }
     }
 
+    // ── get_local_history ─────────────────────────────────────────────────────
+
+    @McpTool(name = "get_local_history")
+    @McpDescription(description = """
+        Returns IntelliJ's Local History for a file or directory: a list of revisions with
+        timestamps, optional labels (e.g. "Before: Rename variable"), and optional diffs.
+        - For a file: unified diff between consecutive revisions.
+        - For a directory: list of added/modified/deleted paths between consecutive revisions.
+        If no path is specified, returns recent project-wide change events.
+
+        Parameters:
+        - path: file or directory path (relative to project root, or absolute); omit for project-wide events
+        - maxRevisions: max number of revisions to return (default: 20)
+        - withDiff: if true, include changes between each revision and its predecessor (default: false)
+    """)
+    suspend fun get_local_history(
+        path: String = "",
+        maxRevisions: Int = 20,
+        withDiff: Boolean = false
+    ): String {
+        disabledMessage("get_local_history")?.let { return it }
+        val project = coroutineContext.project
+        return withContext(Dispatchers.IO) {
+            try {
+                val lhClass   = Class.forName("com.intellij.history.LocalHistory")
+                val lh        = lhClass.getMethod("getInstance").invoke(null)
+                val implClass = runCatching {
+                    Class.forName("com.intellij.history.integration.LocalHistoryImpl")
+                }.getOrNull() ?: return@withContext "LocalHistory implementation not accessible."
+
+                val facade  = implClass.getMethod("getFacade").invoke(lh)
+                    ?: return@withContext "LocalHistory facade not available."
+                val gateway = implClass.getMethod("getGateway").invoke(lh)
+                    ?: return@withContext "LocalHistory gateway not available."
+
+                val facadeClass = facade.javaClass
+                val base = project.basePath ?: ""
+                val fmt  = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
+
+                // Force-register any unsaved documents so history is up to date
+                runCatching {
+                    generateSequence(gateway.javaClass as Class<*>?) { it.superclass }
+                        .flatMap { it.declaredMethods.asSequence() }
+                        .firstOrNull { it.name == "registerUnsavedDocuments" }
+                        ?.also { it.isAccessible = true }
+                        ?.invoke(gateway, facade)
+                }
+
+                if (path.isNotBlank()) {
+                    // ── File / directory history ───────────────────────────
+                    val absPath = if (path.startsWith("/")) path else "$base/$path"
+                    val vFile   = LocalFileSystem.getInstance().refreshAndFindFileByPath(absPath)
+                        ?: return@withContext "Path not found: $path"
+                    val isDir   = vFile.isDirectory
+
+                    // Translate to the path form used by LocalHistory
+                    val lhPath = runCatching {
+                        Class.forName("com.intellij.history.integration.IdeaGateway")
+                            .getMethod("getPathOrUrl", com.intellij.openapi.vfs.VirtualFile::class.java)
+                            .invoke(gateway, vFile) as? String
+                    }.getOrNull() ?: absPath
+
+                    // ── Approach 1: FileHistoryDialogModel for FILES only (returns Revision with valid ts) ──
+                    // DirectoryHistoryDialogModel is skipped: its RevisionItems have broken timestamps
+                    @Suppress("UNCHECKED_CAST")
+                    val revisions: List<Any> = (if (!isDir) runCatching {
+                        val modelCls = Class.forName(
+                            "com.intellij.history.integration.ui.models.FileHistoryDialogModel")
+                        val ctor = modelCls.constructors
+                            .filter { c -> c.parameterCount in 4..5 &&
+                                com.intellij.openapi.project.Project::class.java.isAssignableFrom(c.parameterTypes[0]) }
+                            .minByOrNull { it.parameterCount }
+                        val model = if (ctor?.parameterCount == 4) ctor.newInstance(project, gateway, facade, vFile)
+                                    else                            ctor?.newInstance(project, gateway, facade, vFile, false)
+                        val allModelMethods = generateSequence(modelCls as Class<*>?) { it.superclass }
+                            .flatMap { it.declaredMethods.asSequence() }.toList()
+                        listOf("getRevisions", "calcRevisionsInBackground", "getItems")
+                            .firstNotNullOfOrNull { name ->
+                                allModelMethods.firstOrNull { it.name == name && it.parameterCount == 0 }
+                                    ?.also { it.isAccessible = true }
+                                    ?.let { runCatching { it.invoke(model) as? List<Any> }.getOrNull() }
+                                    ?.takeIf { it.isNotEmpty() }
+                            }
+                    }.getOrNull()?.takeIf { it.isNotEmpty() } else null)
+
+                    // ── Approach 2: ChangeList.iterChanges() → filter ChangeSets by path ──
+                    // Used for: directories (always), files (fallback if dialog model fails)
+                    ?: runCatching {
+                        val changeList = generateSequence(facadeClass as Class<*>?) { it.superclass }
+                            .flatMap { it.declaredMethods.asSequence() }
+                            .firstOrNull { "getChangeList" in it.name }
+                            ?.also { it.isAccessible = true }?.invoke(facade)
+
+                        val iterM = changeList?.let {
+                            generateSequence(it.javaClass as Class<*>?) { c -> c.superclass }
+                                .flatMap { c -> c.declaredMethods.asSequence() }
+                                .firstOrNull { m -> m.name == "iterChanges" }
+                                ?.also { m -> m.isAccessible = true }
+                        }
+                        @Suppress("UNCHECKED_CAST")
+                        val allSets = (iterM?.invoke(changeList) as? Iterable<Any>)?.toList() ?: emptyList()
+
+                        // A ChangeSet matches if any of its inner Changes contains our path
+                        allSets.filter { cs ->
+                            runCatching {
+                                val innerChanges = generateSequence(cs.javaClass as Class<*>?) { it.superclass }
+                                    .flatMap { it.declaredMethods.asSequence() }
+                                    .firstOrNull { it.name == "getChanges" && it.parameterCount == 0 }
+                                    ?.also { it.isAccessible = true }
+                                    ?.let { @Suppress("UNCHECKED_CAST") it.invoke(cs) as? Iterable<Any> }
+                                    ?: listOf(cs)  // fallback: treat the changeset itself as the change
+                                innerChanges.any { ch ->
+                                    runCatching {
+                                        val p = generateSequence(ch.javaClass as Class<*>?) { it.superclass }
+                                            .flatMap { it.declaredMethods.asSequence() }
+                                            .firstOrNull { it.name == "getPath" && it.parameterCount == 0 }
+                                            ?.also { it.isAccessible = true }?.invoke(ch)?.toString()
+                                        if (p != null) return@runCatching(
+                                            if (isDir) p.startsWith("$lhPath/") || p == lhPath
+                                            else p == lhPath
+                                        )
+                                        // Try affectsPath(String)
+                                        generateSequence(ch.javaClass as Class<*>?) { it.superclass }
+                                            .flatMap { it.declaredMethods.asSequence() }
+                                            .firstOrNull { it.name == "affectsPath" && it.parameterCount == 1 }
+                                            ?.also { it.isAccessible = true }
+                                            ?.invoke(ch, lhPath) as? Boolean == true
+                                    }.getOrDefault(false)
+                                }
+                            }.getOrDefault(false)
+                        }.takeIf { it.isNotEmpty() }
+                    }.getOrNull()
+
+                    ?: run {
+                        return@withContext "No local history found for: ${absPath.relativeTo(base)}"
+                    }
+
+                    if (revisions.isEmpty())
+                        return@withContext "No local history for: ${absPath.relativeTo(base)}"
+
+                    val entries = revisions.take(maxRevisions).mapIndexed { idx, rev ->
+                        val ts    = changeSetTimestamp(rev)
+                        val label = runCatching { invoke(rev, "getLabel") as? String }.getOrNull()
+                        val cause = runCatching { invoke(rev, "getCauseChangeName") as? String }.getOrNull()
+
+                        val diff: String? = if (withDiff && idx + 1 < revisions.size) runCatching {
+                            // Try Entry-based content first (works with Revision objects from dialog model)
+                            val entryNow  = invoke(rev,              "getEntry")
+                            val entryPrev = invoke(revisions[idx+1], "getEntry")
+                            val curFromEntry  = if (!isDir) entryContent(entryNow)  else null
+                            val prevFromEntry = if (!isDir) entryContent(entryPrev) else null
+
+                            if (curFromEntry != null && prevFromEntry != null) {
+                                unifiedDiff("${vFile.name} (prev)", vFile.name, prevFromEntry, curFromEntry)
+                            } else if (!isDir) {
+                                // Fallback: use LocalHistory.getByteContent(vFile, { t -> t <= ts }) via proxy
+                                val cur  = contentAtTimestamp(lh, lhClass, vFile, ts)
+                                val prev = contentAtTimestamp(lh, lhClass, vFile,
+                                    runCatching { invoke(revisions[idx+1], "getTimestamp") as? Long }.getOrNull() ?: 0L)
+                                if (cur != null && prev != null && cur != prev)
+                                    unifiedDiff("${vFile.name} (prev)", vFile.name, prev, cur)
+                                else null
+                            } else {
+                                // Directory: compare entry trees
+                                if (entryNow != null && entryPrev != null)
+                                    directoryDiffSummary(entryPrev, entryNow).takeIf { it.isNotBlank() }
+                                else null
+                            }
+                        }.getOrNull() else null
+
+                        LocalHistoryEntry(
+                            index     = idx,
+                            timestamp = fmt.format(java.util.Date(ts)),
+                            label     = label ?: cause,
+                            diff      = diff
+                        )
+                    }
+                    Json.encodeToString(LocalHistoryFile(
+                        file           = absPath.relativeTo(base),
+                        isDirectory    = isDir,
+                        totalRevisions = revisions.size,
+                        entries        = entries
+                    ))
+
+                } else {
+                    // ── Project-wide recent changes ────────────────────────
+                    // createTransientRootEntryForPath requires a ReadAction
+                    val createRootM = generateSequence(gateway.javaClass as Class<*>?) { it.superclass }
+                        .flatMap { it.declaredMethods.asSequence() }
+                        .firstOrNull { it.name == "createTransientRootEntryForPath" && it.parameterCount == 2 }
+                        ?.also { it.isAccessible = true }
+                        ?: return@withContext "createTransientRootEntryForPath not found on gateway."
+                    val rootEntry = runCatching {
+                        com.intellij.openapi.application.ReadAction.compute<Any, Throwable> {
+                            createRootM.invoke(gateway, base, false)
+                        }
+                    }.getOrElse { e ->
+                        return@withContext "createTransientRootEntryForPath failed: ${e.cause?.message ?: e.message}"
+                    }
+
+                    // Use ChangeList.iterChanges() — returns most-recent-first
+                    val changeList = generateSequence(facadeClass as Class<*>?) { it.superclass }
+                        .flatMap { it.declaredMethods.asSequence() }
+                        .firstOrNull { "getChangeList" in it.name }
+                        ?.also { it.isAccessible = true }?.invoke(facade)
+                        ?: return@withContext "ChangeList not accessible."
+
+                    val iterM = generateSequence(changeList.javaClass as Class<*>?) { it.superclass }
+                        .flatMap { it.declaredMethods.asSequence() }
+                        .firstOrNull { it.name == "iterChanges" }
+                        ?.also { it.isAccessible = true }
+                        ?: return@withContext "iterChanges not found on ChangeList."
+
+                    @Suppress("UNCHECKED_CAST")
+                    val allSets = (iterM.invoke(changeList) as? Iterable<Any>)?.toList() ?: emptyList()
+
+                    if (allSets.isEmpty())
+                        return@withContext "No recent local changes recorded."
+
+                    var entryIdx = 0
+                    val entries = allSets.take(maxRevisions * 3).mapNotNull { cs ->
+                        val ts    = changeSetTimestamp(cs)
+                        val label = runCatching { invoke(cs, "getLabel") as? String }.getOrNull()
+                        // Try to list affected paths from the changeset's inner changes
+                        val affectedPaths = runCatching {
+                            val m = generateSequence(cs.javaClass as Class<*>?) { it.superclass }
+                                .flatMap { it.declaredMethods.asSequence() }
+                                .firstOrNull { it.name == "getChanges" && it.parameterCount == 0 }
+                                ?.also { it.isAccessible = true }
+                            @Suppress("UNCHECKED_CAST")
+                            (m?.invoke(cs) as? Iterable<Any>)?.mapNotNull { ch ->
+                                runCatching {
+                                    val p = generateSequence(ch.javaClass as Class<*>?) { it.superclass }
+                                        .flatMap { it.declaredMethods.asSequence() }
+                                        .firstOrNull { it.name == "getPath" && it.parameterCount == 0 }
+                                        ?.also { it.isAccessible = true }?.invoke(ch)?.toString()
+                                    // Keep only paths inside the project
+                                    if (p != null && base.isNotBlank() && p.startsWith(base)) p.relativeTo(base)
+                                    else null
+                                }.getOrNull()
+                            }?.distinct()?.take(10)
+                        }.getOrNull()
+                        // Skip changesets with no in-project paths
+                        if (affectedPaths.isNullOrEmpty()) return@mapNotNull null
+                        LocalHistoryRecentChange(
+                            index         = entryIdx++,
+                            timestamp     = fmt.format(java.util.Date(ts)),
+                            label         = label ?: "(unlabeled change)",
+                            affectedPaths = affectedPaths
+                        )
+                    }.take(maxRevisions)
+                    Json.encodeToString(LocalHistoryRecent(changes = entries))
+                }
+            } catch (e: ClassNotFoundException) {
+                "Local History API not available in this IDE: ${e.message}"
+            } catch (e: Exception) {
+                "Error: ${e.javaClass.simpleName}: ${e.message}"
+            }
+        }
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
     private fun git4ideaLoader(): ClassLoader? =
         runCatching {
             PluginManagerCore.getPlugin(PluginId.getId("Git4Idea"))?.pluginClassLoader
         }.getOrNull()
+
+    /**
+     * Extracts timestamp from a ChangeSet, Revision, RevisionItem, or RecentChange object.
+     * Tries multiple strategies to handle the various wrapper types IntelliJ uses.
+     */
+    private fun changeSetTimestamp(obj: Any?): Long {
+        if (obj == null) return 0L
+        // 1. getTimestamp() directly
+        runCatching { invoke(obj, "getTimestamp") as? Long }
+            .getOrNull()?.takeIf { it > 0L }?.let { return it }
+        // 2. Private field myTimestamp / timestamp
+        runCatching {
+            generateSequence(obj.javaClass as Class<*>?) { it.superclass }
+                .flatMap { it.declaredFields.asSequence() }
+                .firstOrNull { it.name == "myTimestamp" || it.name == "timestamp" }
+                ?.also { it.isAccessible = true }?.getLong(obj)
+        }.getOrNull()?.takeIf { it > 0L }?.let { return it }
+        // 3. Timestamp from wrapped Revision: getRevision().getTimestamp()
+        runCatching {
+            invoke(invoke(obj, "getRevision"), "getTimestamp") as? Long
+        }.getOrNull()?.takeIf { it > 0L }?.let { return it }
+        // 4. Timestamp from first inner Change: getChanges().first().getTimestamp()
+        runCatching {
+            val m = generateSequence(obj.javaClass as Class<*>?) { it.superclass }
+                .flatMap { it.declaredMethods.asSequence() }
+                .firstOrNull { it.name == "getChanges" && it.parameterCount == 0 }
+                ?.also { it.isAccessible = true }
+            @Suppress("UNCHECKED_CAST")
+            (m?.invoke(obj) as? Iterable<Any>)?.firstOrNull()
+                ?.let { invoke(it, "getTimestamp") as? Long }
+        }.getOrNull()?.takeIf { it > 0L }?.let { return it }
+        // 5. All Long fields — take the first that looks like a recent epoch ms timestamp
+        runCatching {
+            generateSequence(obj.javaClass as Class<*>?) { it.superclass }
+                .flatMap { it.declaredFields.asSequence() }
+                .filter { it.type == Long::class.java || it.type == java.lang.Long.TYPE }
+                .mapNotNull { f -> runCatching { f.also { it.isAccessible = true }.getLong(obj) }.getOrNull() }
+                .firstOrNull { it > 1_000_000_000_000L } // plausible epoch-ms (after year 2001)
+        }.getOrNull()?.let { return it }
+        return 0L
+    }
+
+    /**
+     * Returns file content at the given timestamp using LocalHistory.getByteContent via a dynamic proxy
+     * for FileRevisionTimestampComparator — works regardless of whether revisions are Revision or ChangeSet.
+     */
+    private fun contentAtTimestamp(lh: Any, lhClass: Class<*>, vFile: com.intellij.openapi.vfs.VirtualFile, timestamp: Long): String? {
+        return runCatching {
+            val comparatorClass = Class.forName("com.intellij.history.FileRevisionTimestampComparator")
+            val proxy = java.lang.reflect.Proxy.newProxyInstance(
+                comparatorClass.classLoader, arrayOf(comparatorClass)
+            ) { _, _, args -> (args[0] as Long) <= timestamp }
+            val bytes = lhClass.getMethod("getByteContent",
+                com.intellij.openapi.vfs.VirtualFile::class.java, comparatorClass)
+                .invoke(lh, vFile, proxy) as? ByteArray
+            bytes?.let { String(it, Charsets.UTF_8) }
+        }.getOrNull()
+    }
+
+    /** Returns the text content of a LocalHistory Entry (file entry only), or null. */
+    private fun entryContent(entry: Any?): String? {
+        if (entry == null) return null
+        return runCatching {
+            val content = invoke(entry, "getContent") ?: return null
+            val avail   = runCatching { invoke(content, "isAvailable") as? Boolean }.getOrDefault(true)
+            if (avail == false) return null
+            (invoke(content, "getBytes") as? ByteArray)?.let { String(it, Charsets.UTF_8) }
+        }.getOrNull()
+    }
+
+    /**
+     * Compares two LocalHistory directory Entry objects and returns a human-readable
+     * summary of added, deleted, and modified paths (recursive).
+     */
+    private fun directoryDiffSummary(before: Any?, after: Any?, prefix: String = ""): String {
+        @Suppress("UNCHECKED_CAST")
+        val childrenBefore = runCatching {
+            (invoke(before, "getChildren") as? List<Any>)
+                ?.associateBy { invoke(it, "getName") as? String ?: "" } ?: emptyMap()
+        }.getOrDefault(emptyMap())
+
+        @Suppress("UNCHECKED_CAST")
+        val childrenAfter = runCatching {
+            (invoke(after, "getChildren") as? List<Any>)
+                ?.associateBy { invoke(it, "getName") as? String ?: "" } ?: emptyMap()
+        }.getOrDefault(emptyMap())
+
+        val lines = mutableListOf<String>()
+        for (name in (childrenBefore.keys + childrenAfter.keys).toSortedSet()) {
+            val entBefore = childrenBefore[name]
+            val entAfter  = childrenAfter[name]
+            val p = if (prefix.isBlank()) name else "$prefix/$name"
+            when {
+                entBefore == null -> lines.add("+++ $p")
+                entAfter  == null -> lines.add("--- $p")
+                else -> {
+                    val isSubDir = invoke(entAfter, "getChildren") != null
+                    if (isSubDir) {
+                        val sub = directoryDiffSummary(entBefore, entAfter, p)
+                        if (sub.isNotBlank()) lines.add(sub)
+                    } else {
+                        val cBefore = entryContent(entBefore)
+                        val cAfter  = entryContent(entAfter)
+                        if (cBefore != cAfter) lines.add("~ $p")
+                    }
+                }
+            }
+        }
+        return lines.joinToString("\n")
+    }
 
     /** Invokes a no-arg method on any object via reflection (class hierarchy traversal). */
     private fun invoke(obj: Any?, methodName: String): Any? {
@@ -463,3 +834,22 @@ class McpCompanionVcsToolset : McpToolset {
     val message: String? = null
 )
 @Serializable data class VcsBlame(val file: String, val entries: List<VcsBlameEntry>)
+@Serializable data class LocalHistoryEntry(
+    val index: Int,
+    val timestamp: String,
+    val label: String? = null,
+    val diff: String? = null
+)
+@Serializable data class LocalHistoryFile(
+    val file: String,
+    val isDirectory: Boolean = false,
+    val totalRevisions: Int,
+    val entries: List<LocalHistoryEntry>
+)
+@Serializable data class LocalHistoryRecentChange(
+    val index: Int,
+    val timestamp: String,
+    val label: String,
+    val affectedPaths: List<String>? = null
+)
+@Serializable data class LocalHistoryRecent(val changes: List<LocalHistoryRecentChange>)
