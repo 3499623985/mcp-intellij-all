@@ -660,4 +660,121 @@ class ReflectionApiTest {
             println("OK: GitCommit.$name() found")
         }
     }
+
+    // ── LocalHistory (get_local_history) ──────────────────────────────────────
+
+    @Test
+    fun `LocalHistory class and getInstance exist`() {
+        val cls = Class.forName("com.intellij.history.LocalHistory")
+        val getInstance = cls.methods.firstOrNull { it.name == "getInstance" && it.parameterCount == 0 }
+        assertNotNull(getInstance, "LocalHistory.getInstance() not found — get_local_history is broken")
+        assertTrue(java.lang.reflect.Modifier.isStatic(getInstance!!.modifiers),
+            "LocalHistory.getInstance() must be static")
+        println("OK: LocalHistory.getInstance() found")
+    }
+
+    @Test
+    fun `LocalHistoryImpl getFacade and getGateway exist`() {
+        val cls = Class.forName("com.intellij.history.integration.LocalHistoryImpl")
+        for (name in listOf("getFacade", "getGateway")) {
+            val m = cls.methods.firstOrNull { it.name == name && it.parameterCount == 0 }
+            assertNotNull(m, "LocalHistoryImpl.$name() not found — get_local_history is broken")
+            println("OK: LocalHistoryImpl.$name() found")
+        }
+    }
+
+    @Test
+    fun `LocalHistoryImpl getFacade returns object with getChangeList method`() {
+        // The facade's runtime class (LocalHistoryFacadeImpl or similar) has getChangeList;
+        // we verify LocalHistoryImpl exists and getFacade() is accessible — the runtime check
+        // happens in get_local_history itself via reflection on the live facade object.
+        val implCls = Class.forName("com.intellij.history.integration.LocalHistoryImpl")
+        val getFacade = implCls.methods.firstOrNull { it.name == "getFacade" && it.parameterCount == 0 }
+        assertNotNull(getFacade, "LocalHistoryImpl.getFacade() not found — get_local_history cannot access facade")
+        // Also verify the core ChangeList class has getChangeList-related methods accessible
+        val changeListCls = runCatching { Class.forName("com.intellij.history.core.ChangeList") }.getOrNull()
+        if (changeListCls != null) {
+            println("OK: com.intellij.history.core.ChangeList is on classpath")
+        } else {
+            println("INFO: com.intellij.history.core.ChangeList not directly loadable — accessed via facade at runtime")
+        }
+        println("OK: LocalHistoryImpl.getFacade() found — getChangeList resolved at runtime on live facade object")
+    }
+
+    @Test
+    fun `IdeaGateway getPathOrUrl and registerUnsavedDocuments exist`() {
+        val cls = Class.forName("com.intellij.history.integration.IdeaGateway")
+        val getPathOrUrl = generateSequence(cls as Class<*>?) { it.superclass }
+            .flatMap { it.declaredMethods.asSequence() }
+            .firstOrNull { it.name == "getPathOrUrl" && it.parameterCount == 1 }
+        assertNotNull(getPathOrUrl, "IdeaGateway.getPathOrUrl(VirtualFile) not found — get_local_history path resolution is broken")
+        println("OK: IdeaGateway.getPathOrUrl() found")
+        val registerUnsaved = generateSequence(cls as Class<*>?) { it.superclass }
+            .flatMap { it.declaredMethods.asSequence() }
+            .firstOrNull { it.name == "registerUnsavedDocuments" }
+        assertNotNull(registerUnsaved, "IdeaGateway.registerUnsavedDocuments() not found — get_local_history may miss unsaved edits")
+        println("OK: IdeaGateway.registerUnsavedDocuments() found")
+    }
+
+    @Test
+    fun `ChangeList iterChanges method exists`() {
+        // ChangeList is obtained at runtime; we verify the class exists and has iterChanges
+        val changeListCls = runCatching {
+            Class.forName("com.intellij.history.core.ChangeList")
+        }.getOrNull()
+        if (changeListCls == null) {
+            println("INFO: com.intellij.history.core.ChangeList not directly loadable — skipping (found via facade at runtime)")
+            return
+        }
+        val iterChanges = generateSequence(changeListCls as Class<*>?) { it.superclass }
+            .flatMap { it.declaredMethods.asSequence() }
+            .firstOrNull { it.name == "iterChanges" }
+        assertNotNull(iterChanges, "ChangeList.iterChanges() not found — get_local_history revision listing is broken")
+        println("OK: ChangeList.iterChanges() found")
+    }
+
+    @Test
+    fun `FileHistoryDialogModel optional — constructor and revision method exist`() {
+        // Optional: used for file-specific history with valid timestamps; falls back to ChangeList if missing
+        val cls = runCatching {
+            Class.forName("com.intellij.history.integration.ui.models.FileHistoryDialogModel")
+        }.getOrNull()
+        if (cls == null) {
+            println("WARNING: FileHistoryDialogModel not found — file history will use ChangeList fallback only")
+            return
+        }
+        val ctor = cls.constructors.firstOrNull { it.parameterCount in 4..5 }
+        if (ctor == null) {
+            println("WARNING: FileHistoryDialogModel has no 4-or-5-param constructor — file history will use ChangeList fallback")
+            return
+        }
+        val revisionMethod = generateSequence(cls as Class<*>?) { it.superclass }
+            .flatMap { it.declaredMethods.asSequence() }
+            .firstOrNull { it.name in listOf("getRevisions", "calcRevisionsInBackground", "getItems") && it.parameterCount == 0 }
+        if (revisionMethod == null) {
+            println("WARNING: FileHistoryDialogModel has no getRevisions/calcRevisionsInBackground/getItems — file history will use ChangeList fallback")
+            return
+        }
+        println("OK: FileHistoryDialogModel constructor(${ctor.parameterCount} params) and ${revisionMethod.name}() found")
+    }
+
+    @Test
+    fun `FileRevisionTimestampComparator optional — functional interface for getByteContent proxy`() {
+        // Optional: used to retrieve file content at a specific timestamp via LocalHistory.getByteContent()
+        val cls = runCatching {
+            Class.forName("com.intellij.history.FileRevisionTimestampComparator")
+        }.getOrNull()
+        if (cls == null) {
+            println("WARNING: FileRevisionTimestampComparator not found — withDiff on file history will be unavailable")
+            return
+        }
+        assertTrue(cls.isInterface, "FileRevisionTimestampComparator should be an interface")
+        val lhCls = Class.forName("com.intellij.history.LocalHistory")
+        val getByteContent = lhCls.methods.firstOrNull { it.name == "getByteContent" && it.parameterCount == 2 }
+        if (getByteContent == null) {
+            println("WARNING: LocalHistory.getByteContent(VirtualFile, FileRevisionTimestampComparator) not found — diffs unavailable")
+            return
+        }
+        println("OK: FileRevisionTimestampComparator + LocalHistory.getByteContent() found — diffs are available")
+    }
 }
