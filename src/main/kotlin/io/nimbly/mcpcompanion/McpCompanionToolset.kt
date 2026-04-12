@@ -87,10 +87,12 @@ class McpCompanionToolset : McpToolset {
                                prefix + depth=1 = limit to one dot-segment beyond the prefix
 
 ### Code Analysis
-- get_file_problems      → IDE-detected errors/warnings for a file or all open editors
+- get_file_problems      → IDE-detected errors/warnings + quick fixes per problem
                            severity="error" (default) / "warning" / "all"
-- get_quick_fixes        → quick fix suggestions at a specific file:line:column
-                           ⚠ file must be open in editor; use after get_file_problems
+- get_quick_fixes        → all quick fix suggestions for a file or a specific line (grouped by line)
+                           line=0 (default) = whole file; ⚠ file must be open in editor
+- apply_quick_fix        → applies a fix by exact text at a given line
+                           use fixes returned by get_file_problems or get_quick_fixes
 - refresh_project        → sync Gradle or Maven — detects the build system automatically
                            use after modifying build.gradle, pom.xml, or when dependencies drift
 - get_project_structure  → list modules, SDK, source roots, dependencies — call this first on a new project
@@ -140,9 +142,9 @@ IMPORTANT: Always prefer IntelliJ tools over native Write/Edit/Bash(rm) for any 
   3. explain + fix with replace_text_undoable
 
 **"Fix code problems"**
-  1. get_file_problems — list errors/warnings
-  2. get_quick_fixes — get fix suggestions at the problem position
-  3. replace_text_undoable — apply the fix
+  1. get_file_problems — list errors/warnings with their quick fixes
+  2. apply_quick_fix — apply a fix by exact text at the problem line
+  (or use get_quick_fixes for a broader view, then apply_quick_fix)
 
 **"Debug this"**
   1. add_conditional_breakpoint — set breakpoint with condition

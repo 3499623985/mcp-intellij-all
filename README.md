@@ -50,8 +50,9 @@ An IntelliJ IDEA plugin that extends the built-in [JetBrains MCP Server](https:/
 ### Code Analysis
 | Tool | Description |
 |------|-------------|
-| `get_file_problems` | IDE-detected errors/warnings for a file or all open editors |
-| `get_quick_fixes` | Quick fix suggestions at a specific file:line:column — use after get_file_problems |
+| `get_file_problems` | IDE-detected errors/warnings for a file or all open editors, including available quick fixes per problem |
+| `get_quick_fixes` | All quick fix suggestions for a file or a specific line, grouped by line |
+| `apply_quick_fix` | Applies a quick fix by exact text at a given line (use fixes returned by get_file_problems or get_quick_fixes) |
 | `refresh_project` 🔬 | Sync Gradle or Maven build system — detects the build tool automatically from the project root |
 | `get_project_structure` | Returns SDK, modules, source roots, excluded folders, and module dependencies |
 

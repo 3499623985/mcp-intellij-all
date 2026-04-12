@@ -54,8 +54,7 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
         including the quick fix suggestions available for each problem.
         filePath: path relative to project root (default: all open editors)
         severity: minimum severity — "error" (default), "warning", "all"
-        Each problem includes: file, line, column, severity, message.
-        Use get_quick_fixes to retrieve fix suggestions for a specific position.
+        Each problem includes: file, line, column, severity, message, fixes.
     """)
     suspend fun get_file_problems(filePath: String? = null, severity: String = "error"): String {
         disabledMessage("get_file_problems")?.let { return it }
@@ -81,12 +80,34 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
 
         if (files.isEmpty()) return if (filePath != null) "File not found: $filePath" else "No open editors"
 
-        val problems = runReadAction {
+        fun findField(obj: Any, name: String) = generateSequence(obj.javaClass as Class<*>?) { it.superclass }
+            .flatMap { it.declaredFields.asSequence() }.find { it.name == name }?.also { it.isAccessible = true }
+        fun findDeclaredMethod(obj: Any, name: String, vararg params: Class<*>) = generateSequence(obj.javaClass as Class<*>?) { it.superclass }
+            .flatMap { it.declaredMethods.asSequence() }.find { m -> m.name == name && m.parameterTypes.contentEquals(params) }?.also { it.isAccessible = true }
+        fun extractFixes(info: HighlightInfo, editor: com.intellij.openapi.editor.Editor?, psiFile: com.intellij.psi.PsiFile?): List<String> =
+            runCatching {
+                val offsetStore  = findField(info, "offsetStore")?.get(info) ?: return emptyList()
+                val descriptors  = findDeclaredMethod(info, "getIntentionActionDescriptors", offsetStore.javaClass)
+                    ?.invoke(info, offsetStore) as? List<*> ?: return emptyList()
+                descriptors.mapNotNull { desc ->
+                    runCatching {
+                        val action = desc?.javaClass?.getMethod("getAction")?.invoke(desc) ?: return@runCatching null
+                        if (editor != null && psiFile != null)
+                            runCatching { action.javaClass.methods.find { it.name == "isAvailable" && it.parameterCount == 3 }?.invoke(action, project, editor, psiFile) }
+                        action.javaClass.getMethod("getText").invoke(action)?.toString()
+                    }.getOrNull()?.takeIf { it.isNotBlank() && it != "(not initialized)" }
+                }
+            }.getOrDefault(emptyList())
+
+        val problems = runOnEdt {
             files.flatMap { (relPath, vFile) ->
                 val document = FileDocumentManager.getInstance().getDocument(vFile)
                     ?: return@flatMap emptyList()
                 val markupModel = DocumentMarkupModel.forDocument(document, project, false)
                     ?: return@flatMap emptyList()
+                val editor  = FileEditorManager.getInstance(project).openTextEditor(
+                    com.intellij.openapi.fileEditor.OpenFileDescriptor(project, vFile), false)
+                val psiFile = com.intellij.psi.PsiManager.getInstance(project).findFile(vFile)
                 markupModel.allHighlighters
                     .mapNotNull { it.errorStripeTooltip as? HighlightInfo }
                     .filter { it.severity >= minSeverity && !it.description.isNullOrBlank() }
@@ -98,7 +119,8 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
                             line     = line,
                             column   = col,
                             severity = info.severity.name,
-                            message  = info.description
+                            message  = info.description,
+                            fixes    = extractFixes(info, editor, psiFile)
                         )
                     }
             }
@@ -112,17 +134,16 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
 
     @McpTool(name = "get_quick_fixes")
     @McpDescription(description = """
-        Returns quick fix and intention action suggestions at a specific position in a file.
-        Uses the same actions as Alt+Enter / "Show Context Actions" in the IDE.
-        ⚠ The file must be open in the editor — returns empty if not open.
+        Returns quick fix and intention action suggestions for a file (like Alt+Enter in the IDE).
+        ⚠ The file must be open in the editor — use navigate_to first if needed.
         filePath: path relative to project root
-        line: 1-based line number
-        column: 1-based column number (default: 1)
+        line: 1-based line number to restrict to a specific line; 0 (default) = whole file
+        column: 1-based column, used only together with line > 0 (default: 1)
+        Results are grouped by line: {"line": 5, "message": "...", "fixes": ["Fix A", "Fix B"]}
     """)
-    suspend fun get_quick_fixes(filePath: String, line: Int, column: Int = 1): String {
+    suspend fun get_quick_fixes(filePath: String, line: Int = 0, column: Int = 1): String {
         disabledMessage("get_quick_fixes")?.let { return it }
         val project = coroutineContext.project
-        val basePath = project.basePath ?: return "Cannot determine project base path"
 
         val vFile = runOnEdt { resolveFilePath(project, filePath) }
             ?: return "File not found: $filePath\nTried relative to: ${project.basePath}"
@@ -144,35 +165,49 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
         val document = runOnEdt { FileDocumentManager.getInstance().getDocument(vFile) }
             ?: return "Cannot read document for $filePath"
 
-        if (line < 1 || line > document.lineCount) return "Line $line is out of range (file has ${document.lineCount} lines)"
-        val lineStart = document.getLineStartOffset(line - 1)
-        val offset    = (lineStart + column - 1).coerceIn(lineStart, document.getLineEndOffset(line - 1))
+        // Determine the search range: whole file (line=0) or a specific line
+        val rangeStart: Int
+        val rangeEnd: Int
+        if (line <= 0) {
+            rangeStart = 0
+            rangeEnd   = document.textLength
+        } else {
+            if (line > document.lineCount) return "Line $line is out of range (file has ${document.lineCount} lines)"
+            rangeStart = document.getLineStartOffset(line - 1)
+            rangeEnd   = document.getLineEndOffset(line - 1)
+        }
 
+        // Collect all highlights that overlap with the search range (not just exact offset match)
         val highlights = runReadAction {
             val markupModel = DocumentMarkupModel.forDocument(document, project, false)
             markupModel?.allHighlighters
                 ?.mapNotNull { it.errorStripeTooltip as? HighlightInfo }
-                ?.filter { it.severity >= HighlightSeverity.INFORMATION && it.startOffset <= offset && it.endOffset >= offset }
+                ?.filter { it.severity >= HighlightSeverity.INFORMATION
+                        && it.startOffset < rangeEnd
+                        && it.endOffset > rangeStart }
                 ?: emptyList()
         }
-        if (highlights.isEmpty()) return "No quick fixes found at $filePath:$line:$column"
 
         fun findField(obj: Any, name: String) = generateSequence(obj.javaClass as Class<*>?) { it.superclass }
             .flatMap { it.declaredFields.asSequence() }.find { it.name == name }?.also { it.isAccessible = true }
         fun findDeclaredMethod(obj: Any, name: String, vararg params: Class<*>) = generateSequence(obj.javaClass as Class<*>?) { it.superclass }
             .flatMap { it.declaredMethods.asSequence() }.find { m -> m.name == name && m.parameterTypes.contentEquals(params) }?.also { it.isAccessible = true }
 
-        val fixes = runOnEdt {
+        @Serializable
+        data class FixGroup(val line: Int, val message: String, val fixes: List<String>)
+
+        val groups = runOnEdt {
             val editor = FileEditorManager.getInstance(project)
                 .openTextEditor(com.intellij.openapi.fileEditor.OpenFileDescriptor(project, vFile), false)
             val psiFile = com.intellij.psi.PsiManager.getInstance(project).findFile(vFile)
 
-            highlights.flatMap { info ->
+            // 1. Fixes attached to highlight markers (errors, warnings, hints)
+            val fromHighlights = highlights.mapNotNull { info ->
                 runCatching {
-                    val offsetStore = findField(info, "offsetStore")?.get(info) ?: return@runCatching emptyList<String>()
+                    val offsetStore = findField(info, "offsetStore")?.get(info) ?: return@runCatching null
                     val descriptors = findDeclaredMethod(info, "getIntentionActionDescriptors", offsetStore.javaClass)
-                        ?.invoke(info, offsetStore) as? List<*> ?: return@runCatching emptyList()
-                    descriptors.mapNotNull { desc ->
+                        ?.invoke(info, offsetStore) as? List<*> ?: return@runCatching null
+                    val fixTexts = descriptors.mapNotNull { desc ->
                         runCatching {
                             val action = desc?.javaClass?.getMethod("getAction")?.invoke(desc) ?: return@runCatching null
                             if (editor != null && psiFile != null) {
@@ -184,12 +219,113 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
                             action.javaClass.getMethod("getText").invoke(action)?.toString()
                         }.getOrNull()?.takeIf { it.isNotBlank() && it != "(not initialized)" }
                     }
-                }.getOrDefault(emptyList())
-            }.distinct()
+                    if (fixTexts.isEmpty()) null
+                    else FixGroup(
+                        line    = document.getLineNumber(info.startOffset) + 1,
+                        message = info.description?.takeIf { it.isNotBlank() } ?: info.severity.name,
+                        fixes   = fixTexts
+                    )
+                }.getOrNull()
+            }
+
+            val allGroups = fromHighlights.toMutableList()
+            allGroups
         }
 
-        if (fixes.isEmpty()) return "No quick fixes found at $filePath:$line:$column"
-        return Json.encodeToString(fixes)
+        if (groups.isEmpty()) return "No quick fixes found in $filePath" + if (line > 0) " at line $line" else ""
+        return Json.encodeToString(groups)
+    }
+
+    // ── apply_quick_fix ───────────────────────────────────────────────────────
+
+    @McpTool(name = "apply_quick_fix")
+    @McpDescription(description = """
+        Applies a quick fix or intention action to a problem in a file.
+        The file must be open in the editor.
+        filePath: path relative to project root
+        fixText: exact text of the fix to apply (as returned by get_file_problems or get_quick_fixes)
+        line: restrict search to a specific 1-based line (0 or omitted = whole file, recommended)
+        If multiple fixes match the text, the first one is applied.
+        Returns a confirmation message or an error if the fix was not found.
+    """)
+    suspend fun apply_quick_fix(filePath: String, fixText: String, line: Int = 0): String {
+        disabledMessage("apply_quick_fix")?.let { return it }
+        val project = coroutineContext.project
+
+        val vFile = runOnEdt { resolveFilePath(project, filePath) }
+            ?: return "File not found: $filePath\nTried relative to: ${project.basePath}"
+
+        val isAlreadyOpen = runOnEdt {
+            FileEditorManager.getInstance(project).openFiles.any { it.path == vFile.path }
+        }
+        if (!isAlreadyOpen) return "File is not open in the editor. Open it first via navigate_to."
+
+        val daemonRunning = runReadAction {
+            runCatching {
+                DaemonCodeAnalyzer.getInstance(project).javaClass.getMethod("isRunning").invoke(DaemonCodeAnalyzer.getInstance(project)) as? Boolean ?: false
+            }.getOrDefault(false)
+        }
+        if (daemonRunning) return "IDE is still analysing the file — wait a moment and try again."
+
+        val document = runOnEdt { FileDocumentManager.getInstance().getDocument(vFile) }
+            ?: return "Cannot read document for $filePath"
+
+        if (line > document.lineCount) return "Line $line is out of range (file has ${document.lineCount} lines)"
+        val lineStart = if (line <= 0) 0 else document.getLineStartOffset(line - 1)
+        val lineEnd   = if (line <= 0) document.textLength else document.getLineEndOffset(line - 1)
+
+        fun findField(obj: Any, name: String) = generateSequence(obj.javaClass as Class<*>?) { it.superclass }
+            .flatMap { it.declaredFields.asSequence() }.find { it.name == name }?.also { it.isAccessible = true }
+        fun findDeclaredMethod(obj: Any, name: String, vararg params: Class<*>) = generateSequence(obj.javaClass as Class<*>?) { it.superclass }
+            .flatMap { it.declaredMethods.asSequence() }.find { m -> m.name == name && m.parameterTypes.contentEquals(params) }?.also { it.isAccessible = true }
+
+        val highlights = runReadAction {
+            val markupModel = DocumentMarkupModel.forDocument(document, project, false)
+            markupModel?.allHighlighters
+                ?.mapNotNull { it.errorStripeTooltip as? HighlightInfo }
+                ?.filter { it.severity >= HighlightSeverity.INFORMATION
+                        && it.startOffset < lineEnd
+                        && it.endOffset > lineStart }
+                ?: emptyList()
+        }
+
+        val applied = runOnEdt {
+            val editor  = FileEditorManager.getInstance(project)
+                .openTextEditor(com.intellij.openapi.fileEditor.OpenFileDescriptor(project, vFile), false)
+                ?: return@runOnEdt false
+            val psiFile = com.intellij.psi.PsiManager.getInstance(project).findFile(vFile)
+                ?: return@runOnEdt false
+
+            for (info in highlights) {
+                runCatching {
+                    val offsetStore = findField(info, "offsetStore")?.get(info) ?: return@runCatching
+                    val descriptors = findDeclaredMethod(info, "getIntentionActionDescriptors", offsetStore.javaClass)
+                        ?.invoke(info, offsetStore) as? List<*> ?: return@runCatching
+                    for (desc in descriptors) {
+                        runCatching {
+                            val action = desc?.javaClass?.getMethod("getAction")?.invoke(desc) ?: return@runCatching
+                            val text   = action.javaClass.getMethod("getText").invoke(action)?.toString() ?: return@runCatching
+                            if (text == fixText) {
+                                val isAvail = runCatching {
+                                    action.javaClass.methods.find { it.name == "isAvailable" && it.parameterCount == 3 }
+                                        ?.invoke(action, project, editor, psiFile) as? Boolean ?: true
+                                }.getOrDefault(true)
+                                if (isAvail) {
+                                    action.javaClass.methods.find { it.name == "invoke" && it.parameterCount == 3 }
+                                        ?.invoke(action, project, editor, psiFile)
+                                    return@runOnEdt true
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            false
+        }
+
+        val loc = if (line > 0) "$filePath:$line" else filePath
+        return if (applied) "Quick fix applied: \"$fixText\" in $loc"
+               else "Fix not found: \"$fixText\"${if (line > 0) " at line $line" else ""}. Use get_quick_fixes to list available fixes."
     }
 
     // ── refresh_project ───────────────────────────────────────────────────────
@@ -308,7 +444,7 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
 
 // ── Data classes ──────────────────────────────────────────────────────────────
 
-@Serializable data class FileProblem(val file: String, val line: Int, val column: Int, val severity: String, val message: String)
+@Serializable data class FileProblem(val file: String, val line: Int, val column: Int, val severity: String, val message: String, val fixes: List<String> = emptyList())
 
 @Serializable data class ProjectStructure(val name: String, val basePath: String, val sdk: SdkInfo?, val availableSdks: List<SdkInfo>, val modules: List<ModuleInfo>)
 @Serializable data class SdkInfo(val name: String, val type: String, val version: String?, val homePath: String? = null)
