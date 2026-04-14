@@ -121,4 +121,123 @@ class CodeAnalysisReflectionTest {
 
     // ── ProgressSuspender — already covered in ReflectionApiTest ─────────────
     // (ourProgressToSuspenderMap, suspendProcess, resumeProcess)
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // list_inspections / run_inspections
+    // ══════════════════════════════════════════════════════════════════════════
+
+    // ── InspectionProjectProfileManager ──────────────────────────────────────
+    // Both tools call InspectionProjectProfileManager.getInstance(project).currentProfile
+    // to obtain the active inspection profile.
+
+    @Test
+    fun `InspectionProjectProfileManager class and getInstance exist`() {
+        val cls = runCatching {
+            Class.forName("com.intellij.profile.codeInspection.InspectionProjectProfileManager")
+        }.getOrNull()
+        if (cls == null) {
+            println("INFO: InspectionProjectProfileManager not on test classpath — skipping")
+            return
+        }
+        val method = runCatching {
+            cls.getMethod("getInstance", Class.forName("com.intellij.openapi.project.Project"))
+        }.getOrNull()
+        assertNotNull(method,
+            "InspectionProjectProfileManager.getInstance(Project) not found — " +
+            "list_inspections and run_inspections will fail to obtain the inspection profile.")
+        println("OK: InspectionProjectProfileManager.getInstance(Project) found")
+    }
+
+    // ── InspectionProfileImpl.getInspectionTools ──────────────────────────────
+    // run_inspections calls profile.getInspectionTools(psiFile) to list enabled tools.
+
+    @Test
+    fun `InspectionProfileImpl has getInspectionTools method`() {
+        val cls = runCatching {
+            Class.forName("com.intellij.codeInspection.ex.InspectionProfileImpl")
+        }.getOrNull() ?: runCatching {
+            Class.forName("com.intellij.profile.codeInspection.InspectionProfileImpl")
+        }.getOrNull()
+        if (cls == null) {
+            println("INFO: InspectionProfileImpl not on test classpath — skipping")
+            return
+        }
+        val method = generateSequence(cls as Class<*>?) { it.superclass }
+            .flatMap { it.methods.asSequence() }
+            .find { it.name == "getInspectionTools" && it.parameterCount == 1 }
+        assertNotNull(method,
+            "InspectionProfileImpl.getInspectionTools(PsiElement) not found — " +
+            "run_inspections will return no results.")
+        println("OK: InspectionProfileImpl.getInspectionTools(PsiElement) found")
+    }
+
+    // ── HighlightDisplayKey.find ───────────────────────────────────────────────
+    // run_inspections uses HighlightDisplayKey.find(shortName) to get the key for each tool.
+
+    @Test
+    fun `HighlightDisplayKey has static find method`() {
+        val cls = runCatching {
+            Class.forName("com.intellij.codeInsight.daemon.HighlightDisplayKey")
+        }.getOrNull()
+        if (cls == null) {
+            println("INFO: HighlightDisplayKey not on test classpath — skipping")
+            return
+        }
+        val method = runCatching {
+            cls.getMethod("find", String::class.java)
+        }.getOrNull()
+        assertNotNull(method,
+            "HighlightDisplayKey.find(String) not found — " +
+            "run_inspections will skip all inspection tools.")
+        assertTrue(java.lang.reflect.Modifier.isStatic(method!!.modifiers),
+            "HighlightDisplayKey.find() must be static")
+        println("OK: HighlightDisplayKey.find(String) found")
+    }
+
+    // ── LocalInspectionEP.LOCAL_INSPECTION extension point ────────────────────
+    // isLanguageCompatible() in run_inspections uses this EP to read the declared language
+    // of each inspection and filter out cross-language false positives (e.g. Kotlin on Java).
+
+    @Test
+    fun `LocalInspectionEP LOCAL_INSPECTION extension point is accessible`() {
+        val cls = runCatching {
+            Class.forName("com.intellij.codeInspection.LocalInspectionEP")
+        }.getOrNull()
+        if (cls == null) {
+            println("INFO: LocalInspectionEP not on test classpath — skipping")
+            return
+        }
+        val field = runCatching {
+            cls.getField("LOCAL_INSPECTION")
+        }.getOrNull()
+        assertNotNull(field,
+            "LocalInspectionEP.LOCAL_INSPECTION field not found — " +
+            "run_inspections language-compatibility filter will stop working, " +
+            "potentially causing Kotlin inspections to run on Java files.")
+        println("OK: LocalInspectionEP.LOCAL_INSPECTION field found")
+    }
+
+    // ── HighlightInfo.getInspectionToolId ─────────────────────────────────────
+    // run_inspections supplements batch results with daemon highlights for open files.
+    // It reads info.inspectionToolId to identify which inspection produced each highlight,
+    // and skips highlights that have no associated inspection (e.g. compiler errors).
+
+    @Test
+    fun `HighlightInfo has getInspectionToolId method`() {
+        val cls = runCatching {
+            Class.forName("com.intellij.codeInsight.daemon.impl.HighlightInfo")
+        }.getOrNull()
+        if (cls == null) {
+            println("INFO: HighlightInfo not on test classpath — skipping")
+            return
+        }
+        val method = generateSequence(cls as Class<*>?) { it.superclass }
+            .flatMap { it.methods.asSequence() }
+            .find { it.name == "getInspectionToolId" && it.parameterCount == 0 }
+        assertNotNull(method,
+            "HighlightInfo.getInspectionToolId() not found — " +
+            "run_inspections daemon-highlight supplement will not be able to identify " +
+            "inspection-related highlights (TYPO, annotator results, etc.).")
+        println("OK: HighlightInfo.getInspectionToolId() found")
+    }
 }

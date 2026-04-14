@@ -93,6 +93,10 @@ class McpCompanionToolset : McpToolset {
                            line=0 (default) = whole file; ⚠ file must be open in editor
 - apply_quick_fix        → applies a fix by exact text at a given line
                            use fixes returned by get_file_problems or get_quick_fixes
+- list_inspections       → lists all available inspections in the active profile
+                           optionally filtered to a file or folder; shows id, name, category, severity
+- run_inspections        → runs inspections on a file, folder, or whole project (works on closed files)
+                           filter by inspection ID(s) or minimum severity; returns problems + fixes
 - refresh_project        → sync Gradle or Maven — detects the build system automatically
                            use after modifying build.gradle, pom.xml, or when dependencies drift
 - get_project_structure  → list modules, SDK, source roots, dependencies — call this first on a new project

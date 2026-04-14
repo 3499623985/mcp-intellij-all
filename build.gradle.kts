@@ -13,7 +13,7 @@ val secrets = Properties().apply {
 }
 
 group = "io.nimbly"
-version = "2.8.0"
+version = "2.9.0"
 
 repositories {
     mavenCentral()
@@ -46,6 +46,7 @@ intellijPlatform {
         }
         changeNotes = """
             <ul>
+                <li><b>2.9.0</b> — New tools: <code>list_inspections</code> (browse the active inspection profile) and <code>run_inspections</code> (run inspections on a file or project, with severity filter).</li>
                 <li><b>2.8.0</b> — New tool: <code>apply_quick_fix</code> — applies an IDE quick fix by name (like Alt+Enter).</li>
                 <li><b>2.6.1</b> — Minor plugin description improvements.</li>
                 <li><b>2.6.0</b> — New VCS tools: <code>get_vcs_changes</code> lists modified/added/deleted/moved files with optional unified diff; <code>get_vcs_branch</code> shows current branch and all local/remote branches; <code>get_vcs_log</code> returns recent commit history with author, date, and changed files; <code>get_vcs_blame</code> provides line-by-line annotation. <code>get_vcs_changes</code> and <code>get_vcs_blame</code> work with any VCS; <code>get_vcs_branch</code> and <code>get_vcs_log</code> require the Git plugin (bundled in IntelliJ IDEA).</li>

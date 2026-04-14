@@ -73,7 +73,9 @@ class McpCompanionSettings : PersistentStateComponent<McpCompanionSettings.State
                 "get_intellij_diagnostic", "get_running_processes", "manage_process", "get_ide_settings"
             ),
             "Code Analysis" to listOf(
-                "get_file_problems", "get_quick_fixes", "apply_quick_fix", "refresh_project", "get_project_structure"
+                "get_file_problems", "get_quick_fixes", "apply_quick_fix",
+                "list_inspections", "run_inspections",
+                "refresh_project", "get_project_structure"
             ),
             "Database" to listOf(
                 "list_database_sources", "get_database_schema", "execute_database_query"

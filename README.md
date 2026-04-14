@@ -53,6 +53,8 @@ An IntelliJ IDEA plugin that extends the built-in [JetBrains MCP Server](https:/
 | `get_file_problems` | IDE-detected errors/warnings for a file or all open editors, including available quick fixes per problem |
 | `get_quick_fixes` | All quick fix suggestions for a file or a specific line, grouped by line |
 | `apply_quick_fix` | Applies a quick fix by exact text at a given line (use fixes returned by get_file_problems or get_quick_fixes) |
+| `list_inspections` | Lists all available inspections in the current profile, optionally filtered to a file or folder |
+| `run_inspections` | Runs inspections on a file, folder, or whole project — works on closed files too; filter by inspection ID or severity |
 | `refresh_project` 🔬 | Sync Gradle or Maven build system — detects the build tool automatically from the project root |
 | `get_project_structure` | Returns SDK, modules, source roots, excluded folders, and module dependencies |
 

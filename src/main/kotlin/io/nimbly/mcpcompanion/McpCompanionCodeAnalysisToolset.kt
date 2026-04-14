@@ -279,22 +279,40 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
         fun findDeclaredMethod(obj: Any, name: String, vararg params: Class<*>) = generateSequence(obj.javaClass as Class<*>?) { it.superclass }
             .flatMap { it.declaredMethods.asSequence() }.find { m -> m.name == name && m.parameterTypes.contentEquals(params) }?.also { it.isAccessible = true }
 
-        val highlights = runReadAction {
-            val markupModel = DocumentMarkupModel.forDocument(document, project, false)
-            markupModel?.allHighlighters
-                ?.mapNotNull { it.errorStripeTooltip as? HighlightInfo }
-                ?.filter { it.severity >= HighlightSeverity.INFORMATION
-                        && it.startOffset < lineEnd
-                        && it.endOffset > lineStart }
-                ?: emptyList()
+        // Navigate to the target line so the daemon analyses that area before we read highlights
+        runOnEdt {
+            val targetOffset = if (line > 0) lineStart else 0
+            FileEditorManager.getInstance(project)
+                .openTextEditor(com.intellij.openapi.fileEditor.OpenFileDescriptor(project, vFile, targetOffset), true)
+        }
+        // Wait up to 8s for the daemon to finish after navigation
+        val deadline = System.currentTimeMillis() + 8000
+        while (System.currentTimeMillis() < deadline) {
+            val running = runReadAction {
+                runCatching {
+                    DaemonCodeAnalyzer.getInstance(project).javaClass.getMethod("isRunning")
+                        .invoke(DaemonCodeAnalyzer.getInstance(project)) as? Boolean ?: false
+                }.getOrDefault(false)
+            }
+            if (!running) break
+            kotlinx.coroutines.delay(150)
         }
 
+        // Collect highlights AND apply fix all on EDT (same as get_quick_fixes) to avoid stale HighlightInfo
         val applied = runOnEdt {
             val editor  = FileEditorManager.getInstance(project)
                 .openTextEditor(com.intellij.openapi.fileEditor.OpenFileDescriptor(project, vFile), false)
                 ?: return@runOnEdt false
             val psiFile = com.intellij.psi.PsiManager.getInstance(project).findFile(vFile)
                 ?: return@runOnEdt false
+
+            val markupModel = DocumentMarkupModel.forDocument(document, project, false)
+            val highlights = markupModel?.allHighlighters
+                ?.mapNotNull { it.errorStripeTooltip as? HighlightInfo }
+                ?.filter { it.severity >= HighlightSeverity.INFORMATION
+                        && it.startOffset < lineEnd
+                        && it.endOffset > lineStart }
+                ?: emptyList()
 
             for (info in highlights) {
                 runCatching {
@@ -323,9 +341,304 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
             false
         }
 
+        if (applied) {
+            val loc = if (line > 0) "$filePath:$line" else filePath
+            return "Quick fix applied: \"$fixText\" in $loc"
+        }
+
+        // Fallback: the fix may come from a batch-only inspection not visible in the daemon.
+        // Step 1: find the fix via ProblemsHolder in a read action (NOT on EDT — inspections may access indexes).
+        data class FoundFix(val fix: com.intellij.codeInspection.QuickFix<com.intellij.codeInspection.CommonProblemDescriptor>, val descriptor: com.intellij.codeInspection.ProblemDescriptor)
+        val found: FoundFix? = runReadAction {
+            val psiFile = com.intellij.psi.PsiManager.getInstance(project).findFile(vFile)
+                ?: return@runReadAction null
+            val profile = com.intellij.profile.codeInspection.InspectionProjectProfileManager.getInstance(project).currentProfile
+            val manager = com.intellij.codeInspection.InspectionManager.getInstance(project)
+
+            for (wrapper in profile.getInspectionTools(psiFile)) {
+                val tool = wrapper.tool as? com.intellij.codeInspection.LocalInspectionTool ?: continue
+                val key = com.intellij.codeInsight.daemon.HighlightDisplayKey.find(wrapper.shortName) ?: continue
+                if (!profile.isToolEnabled(key, psiFile)) continue
+
+                var holder = com.intellij.codeInspection.ProblemsHolder(manager, psiFile, false)
+                runCatching {
+                    var visitor = tool.buildVisitor(holder, false)
+                    // Fallback: some inspections (e.g. SpellChecking) need both holder AND visitor with isOnTheFly=true
+                    if (visitor === com.intellij.psi.PsiElementVisitor.EMPTY_VISITOR) {
+                        val holderOnTheFly = com.intellij.codeInspection.ProblemsHolder(manager, psiFile, true)
+                        visitor = tool.buildVisitor(holderOnTheFly, true)
+                        holder = holderOnTheFly
+                    }
+                    if (!isApplicable(wrapper, psiFile, visitor)) return@runCatching
+                    psiFile.accept(object : com.intellij.psi.PsiRecursiveElementWalkingVisitor() {
+                        override fun visitElement(element: com.intellij.psi.PsiElement) {
+                            element.accept(visitor)
+                            super.visitElement(element)
+                        }
+                    })
+                }
+                for (descriptor in holder.results) {
+                    val offset = descriptor.psiElement?.textOffset ?: continue
+                    if (offset < lineStart || offset > lineEnd) continue
+                    val fix = descriptor.fixes?.find { it.name == fixText } ?: continue
+                    return@runReadAction FoundFix(fix, descriptor)
+                }
+            }
+            null
+        }
+
+        // Step 2: apply the fix from a write-safe context (invokeLater, not invokeAndWait).
+        val appliedViaInspection = if (found != null) {
+            val done = java.util.concurrent.atomic.AtomicBoolean(false)
+            com.intellij.openapi.application.ApplicationManager.getApplication().invokeLater {
+                com.intellij.openapi.command.WriteCommandAction.runWriteCommandAction(project) {
+                    found.fix.applyFix(project, found.descriptor)
+                }
+                done.set(true)
+            }
+            // Wait for the invokeLater to complete (up to 5s)
+            val deadline = System.currentTimeMillis() + 5000
+            while (!done.get() && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50)
+            }
+            done.get()
+        } else false
+
         val loc = if (line > 0) "$filePath:$line" else filePath
-        return if (applied) "Quick fix applied: \"$fixText\" in $loc"
-               else "Fix not found: \"$fixText\"${if (line > 0) " at line $line" else ""}. Use get_quick_fixes to list available fixes."
+        return if (appliedViaInspection) "Quick fix applied (batch inspection): \"$fixText\" in $loc"
+               else "Fix not found: \"$fixText\"${if (line > 0) " at line $line" else ""}. Use get_quick_fixes or run_inspections to list available fixes."
+    }
+
+    // ── list_inspections ─────────────────────────────────────────────────────
+
+    @McpTool(name = "list_inspections")
+    @McpDescription(description = """
+        Lists all code inspections available in the current inspection profile.
+        Optionally filtered to show only inspections applicable to a given file or folder.
+        path: file or folder path relative to project root (omit for all inspections)
+        enabled: "true" (default) = only enabled inspections, "false" = only disabled, "all" = both
+        Returns: id, displayName, category, severity, enabled for each inspection.
+    """)
+    suspend fun list_inspections(path: String? = null, enabled: String = "true"): String {
+        disabledMessage("list_inspections")?.let { return it }
+        val project = coroutineContext.project
+
+        val psiFiles: List<com.intellij.psi.PsiFile> = runReadAction {
+            if (path != null) {
+                val vFile = resolveFilePath(project, path)
+                    ?: return@runReadAction emptyList()
+                if (vFile.isDirectory) {
+                    val result = mutableListOf<com.intellij.psi.PsiFile>()
+                    com.intellij.openapi.vfs.VfsUtilCore.iterateChildrenRecursively(vFile,
+                        { it.isDirectory || !it.isDirectory },
+                        { f -> if (!f.isDirectory) com.intellij.psi.PsiManager.getInstance(project).findFile(f)?.let { result += it }; true }
+                    )
+                    result
+                } else {
+                    listOfNotNull(com.intellij.psi.PsiManager.getInstance(project).findFile(vFile))
+                }
+            } else emptyList()
+        }
+
+        val profile = com.intellij.profile.codeInspection.InspectionProjectProfileManager.getInstance(project).currentProfile
+
+        @Serializable
+        data class InspectionInfo(val id: String, val name: String, val category: String, val severity: String, val enabled: Boolean)
+
+        val enabledFilter = when (enabled.lowercase()) {
+            "false" -> false
+            "all"   -> null
+            else    -> true
+        }
+
+        val infos = runReadAction {
+            val tools = if (psiFiles.isNotEmpty())
+                psiFiles.flatMap { profile.getInspectionTools(it).toList() }.distinctBy { it.shortName }
+            else
+                profile.getInspectionTools(null)
+
+            tools.mapNotNull { wrapper ->
+                val isEnabled = if (psiFiles.isNotEmpty())
+                    psiFiles.any { profile.isToolEnabled(com.intellij.codeInsight.daemon.HighlightDisplayKey.find(wrapper.shortName) ?: return@mapNotNull null, it) }
+                else
+                    profile.isToolEnabled(com.intellij.codeInsight.daemon.HighlightDisplayKey.find(wrapper.shortName) ?: return@mapNotNull null)
+                if (enabledFilter != null && isEnabled != enabledFilter) return@mapNotNull null
+                InspectionInfo(
+                    id       = wrapper.shortName,
+                    name     = wrapper.displayName,
+                    category = wrapper.groupDisplayName,
+                    severity = profile.getErrorLevel(com.intellij.codeInsight.daemon.HighlightDisplayKey.find(wrapper.shortName)!!, psiFiles.firstOrNull()).name,
+                    enabled  = isEnabled
+                )
+            }.sortedWith(compareBy({ it.category }, { it.name }))
+        }
+
+        if (infos.isEmpty()) return "No inspections found"
+        return "${infos.size} inspections:\n" + Json.encodeToString(infos)
+    }
+
+    // ── run_inspections ───────────────────────────────────────────────────────
+
+    @McpTool(name = "run_inspections")
+    @McpDescription(description = """
+        Runs code inspections on a file, folder, or the whole project and returns all problems found.
+        Works on closed files too — unlike get_file_problems which only works on open editors.
+        path: file or folder path relative to project root (omit for whole project — can be slow)
+        inspections: comma-separated inspection IDs to run (omit = all enabled inspections).
+                     Use list_inspections to discover IDs.
+        severity: minimum severity to include — "error", "warning" (default), "all"
+        Returns problems grouped by file: file, line, severity, inspection, message, fixes.
+    """)
+    suspend fun run_inspections(path: String? = null, inspections: String? = null, severity: String = "warning"): String {
+        disabledMessage("run_inspections")?.let { return it }
+        val project = coroutineContext.project
+
+        val minSeverity = when (severity.lowercase()) {
+            "error"       -> com.intellij.lang.annotation.HighlightSeverity.ERROR
+            "info"        -> com.intellij.lang.annotation.HighlightSeverity.INFORMATION
+            "all"         -> com.intellij.lang.annotation.HighlightSeverity("__", 0)
+            else          -> com.intellij.lang.annotation.HighlightSeverity.WARNING
+        }
+
+        val requestedIds: Set<String>? = inspections
+            ?.split(",")?.map { it.trim() }?.filter { it.isNotBlank() }?.toSet()
+            ?.takeIf { it.isNotEmpty() }
+
+        val vFiles: List<com.intellij.openapi.vfs.VirtualFile> = runReadAction {
+            if (path != null) {
+                val vFile = resolveFilePath(project, path)
+                    ?: return@runReadAction emptyList()
+                if (vFile.isDirectory) {
+                    val result = mutableListOf<com.intellij.openapi.vfs.VirtualFile>()
+                    com.intellij.openapi.vfs.VfsUtilCore.iterateChildrenRecursively(vFile,
+                        { true },
+                        { f -> if (!f.isDirectory) result += f; true }
+                    )
+                    result
+                } else listOf(vFile)
+            } else {
+                val roots = mutableListOf<com.intellij.openapi.vfs.VirtualFile>()
+                com.intellij.openapi.roots.ProjectRootManager.getInstance(project).contentSourceRoots.forEach { root ->
+                    com.intellij.openapi.vfs.VfsUtilCore.iterateChildrenRecursively(root,
+                        { true },
+                        { f -> if (!f.isDirectory) roots += f; true }
+                    )
+                }
+                roots
+            }
+        }
+
+        if (vFiles.isEmpty()) return if (path != null) "Path not found: $path" else "No source files found in project"
+
+        @Serializable
+        data class InspectionProblem(val file: String, val line: Int, val severity: String, val inspection: String, val message: String, val fixes: List<String>)
+
+        val profile = com.intellij.profile.codeInspection.InspectionProjectProfileManager.getInstance(project).currentProfile
+        val manager = com.intellij.codeInspection.InspectionManager.getInstance(project)
+        val basePath = project.basePath?.trimEnd('/') ?: ""
+
+        val problems = runReadAction {
+            val allProblems = mutableListOf<InspectionProblem>()
+            for (vFile in vFiles) {
+                val psiFile = com.intellij.psi.PsiManager.getInstance(project).findFile(vFile) ?: continue
+                val tools = profile.getInspectionTools(psiFile)
+                for (wrapper in tools) {
+                    val tool = wrapper.tool as? com.intellij.codeInspection.LocalInspectionTool ?: continue
+                    val key = com.intellij.codeInsight.daemon.HighlightDisplayKey.find(wrapper.shortName) ?: continue
+                    if (!profile.isToolEnabled(key, psiFile)) continue
+                    if (requestedIds != null && wrapper.shortName !in requestedIds) continue
+                    val toolSeverity = profile.getErrorLevel(key, psiFile).severity
+                    if (toolSeverity < minSeverity) continue
+
+                    runCatching {
+                        if (!isLanguageCompatible(wrapper, psiFile)) return@runCatching
+                        val document = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(vFile)
+                        // Some inspections (e.g. SpellChecking) override checkFile() instead of buildVisitor().
+                        // Try checkFile() first; fall back to buildVisitor() if it returns null.
+                        // Some inspections (e.g. SpellChecking) return EMPTY_VISITOR for isOnTheFly=false
+                        // but work correctly with isOnTheFly=true — use a dedicated holder with matching flag.
+                        val descriptors: List<com.intellij.codeInspection.ProblemDescriptor> =
+                            tool.checkFile(psiFile, manager, false)?.toList()
+                            ?: run {
+                                val holder = com.intellij.codeInspection.ProblemsHolder(manager, psiFile, false)
+                                var visitor = tool.buildVisitor(holder, false)
+                                var effectiveHolder = holder
+                                // Fallback: some inspections (e.g. SpellChecking) need both holder AND visitor with isOnTheFly=true
+                                if (visitor === com.intellij.psi.PsiElementVisitor.EMPTY_VISITOR) {
+                                    val holderOnTheFly = com.intellij.codeInspection.ProblemsHolder(manager, psiFile, true)
+                                    visitor = tool.buildVisitor(holderOnTheFly, true)
+                                    effectiveHolder = holderOnTheFly
+                                }
+                                if (!isApplicable(wrapper, psiFile, visitor)) return@run emptyList()
+                                psiFile.accept(object : com.intellij.psi.PsiRecursiveElementWalkingVisitor() {
+                                    override fun visitElement(element: com.intellij.psi.PsiElement) {
+                                        element.accept(visitor)
+                                        super.visitElement(element)
+                                    }
+                                })
+                                effectiveHolder.results
+                            }
+                        for (descriptor in descriptors) {
+                            val offset = descriptor.psiElement?.textOffset ?: continue
+                            val lineNum = document?.getLineNumber(offset)?.plus(1) ?: 0
+                            allProblems += InspectionProblem(
+                                file       = vFile.path.removePrefix("$basePath/"),
+                                line       = lineNum,
+                                severity   = toolSeverity.name,
+                                inspection = wrapper.shortName,
+                                message    = descriptor.descriptionTemplate
+                                    .replace(Regex("<[^>]+>"), "")
+                                    .replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&"),
+                                fixes      = descriptor.fixes?.mapNotNull { it.name } ?: emptyList()
+                            )
+                        }
+                    }
+                }
+            }
+            allProblems.sortedWith(compareBy({ it.file }, { it.line }))
+        }
+
+        // Supplement with daemon highlights for files currently open in the editor.
+        // This captures annotator-based items (e.g. SpellCheckingInspection which uses
+        // SpellCheckerAnnotator instead of buildVisitor) that batch inspection misses.
+        // Only runs for already-open files — never forces files open.
+        val existingKeys = problems.map { Triple(it.file, it.line, it.inspection) }.toMutableSet()
+        val daemonProblems = mutableListOf<InspectionProblem>()
+        val openFilePaths = runOnEdt { com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project).openFiles.map { it.path }.toSet() }
+
+        for (vFile in vFiles) {
+            if (vFile.path !in openFilePaths) continue
+            val relPath = vFile.path.removePrefix("$basePath/")
+            val items = runOnEdt {
+                val document = com.intellij.openapi.fileEditor.FileDocumentManager.getInstance().getDocument(vFile)
+                    ?: return@runOnEdt emptyList<InspectionProblem>()
+                val markupModel = com.intellij.openapi.editor.impl.DocumentMarkupModel.forDocument(document, project, false)
+                    ?: return@runOnEdt emptyList()
+                markupModel.allHighlighters.mapNotNull { h ->
+                    val info = h.errorStripeTooltip as? com.intellij.codeInsight.daemon.impl.HighlightInfo
+                        ?: return@mapNotNull null
+                    if (info.severity.compareTo(minSeverity) < 0) return@mapNotNull null
+                    val inspId = info.inspectionToolId ?: return@mapNotNull null  // skip non-inspection highlights
+                    val lineNum = document.getLineNumber(info.startOffset) + 1
+                    InspectionProblem(
+                        file       = relPath,
+                        line       = lineNum,
+                        severity   = info.severity.name,
+                        inspection = inspId,
+                        message    = info.description ?: "",
+                        fixes      = emptyList()  // daemon fixes need an editor context — omitted here
+                    )
+                }
+            }
+            for (p in items) {
+                val key = Triple(p.file, p.line, p.inspection)
+                if (key !in existingKeys) { existingKeys += key; daemonProblems += p }
+            }
+        }
+
+        val allProblems = (problems + daemonProblems).sortedWith(compareBy({ it.file }, { it.line }))
+        if (allProblems.isEmpty()) return "No problems found" + if (path != null) " in $path" else ""
+        return "${allProblems.size} problems found:\n" + Json.encodeToString(allProblems)
     }
 
     // ── refresh_project ───────────────────────────────────────────────────────
@@ -440,6 +753,46 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
             ))
         }
     }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/**
+ * Returns the language declared for an inspection in the LocalInspectionEP extension point.
+ * This is the most reliable source — wrapper.language can be null even for language-specific tools.
+ */
+private fun inspectionEpLanguage(shortName: String): String? =
+    com.intellij.codeInspection.LocalInspectionEP.LOCAL_INSPECTION.extensionList
+        .find { it.shortName == shortName }?.language
+
+/**
+ * Returns true if the given inspection should run on the given file.
+ * Checks both wrapper.language and the EP-declared language.
+ * A visitor that is EMPTY_VISITOR also signals "not applicable".
+ */
+/** Language-only check (no visitor needed). Used for both checkFile() and buildVisitor() paths. */
+private fun isLanguageCompatible(
+    wrapper: com.intellij.codeInspection.ex.InspectionToolWrapper<*, *>,
+    psiFile: com.intellij.psi.PsiFile
+): Boolean {
+    val fileLang = psiFile.language.id
+    val wrapperLang = wrapper.language
+    if (wrapperLang != null && wrapperLang != "any" && !wrapperLang.equals(fileLang, ignoreCase = true)) return false
+    val epLang = inspectionEpLanguage(wrapper.shortName)
+    if (epLang != null && epLang != "any" && !epLang.equals(fileLang, ignoreCase = true)) return false
+    // Kotlin-package inspections must not run on non-Kotlin files
+    val toolPkg = wrapper.tool.javaClass.packageName
+    if (toolPkg.startsWith("org.jetbrains.kotlin") && !fileLang.equals("kotlin", ignoreCase = true)) return false
+    return true
+}
+
+private fun isApplicable(
+    wrapper: com.intellij.codeInspection.ex.InspectionToolWrapper<*, *>,
+    psiFile: com.intellij.psi.PsiFile,
+    visitor: com.intellij.psi.PsiElementVisitor
+): Boolean {
+    if (visitor === com.intellij.psi.PsiElementVisitor.EMPTY_VISITOR) return false
+    return isLanguageCompatible(wrapper, psiFile)
 }
 
 // ── Data classes ──────────────────────────────────────────────────────────────
