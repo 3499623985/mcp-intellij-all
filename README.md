@@ -32,6 +32,11 @@ An IntelliJ IDEA plugin that extends the built-in [JetBrains MCP Server](https:/
 ### Debug
 | Tool | Description |
 |------|-------------|
+| `list_run_configurations` | Lists all run configurations with name, type, and running status |
+| `start_run_configuration` | Launches a named run configuration in run or debug mode |
+| `modify_run_configuration` | Modifies VM options, program arguments, env vars, or working dir of a run configuration |
+| `get_run_configuration_xml` | Returns the full XML definition of a run configuration |
+| `create_run_configuration_from_xml` | Creates a new run configuration from an XML definition (any type) |
 | `debug_run_configuration` 🔬 | Launches a run configuration in debug mode |
 | `get_debug_variables` 🔬 | Local variables and values from the current debugger stack frame |
 | `get_breakpoints` | Lists all line breakpoints with file, line, enabled state, and condition |
@@ -150,7 +155,7 @@ Then install the plugin from `build/distributions/` via **Settings → Plugins �
 
 ### 3. Configure your AI client
 
-Add the JetBrains MCP proxy to your AI client config (e.g. `claude_desktop_config.json`):
+Add the JetBrains MCP proxy to your AI client config (e.g. `~/Library/Application Support/Claude/claude_desktop_config.json`):
 
 ```json
 {
@@ -162,6 +167,39 @@ Add the JetBrains MCP proxy to your AI client config (e.g. `claude_desktop_confi
   }
 }
 ```
+
+Restart your AI client. The proxy auto-discovers the running IntelliJ instance — all tools are available immediately.
+
+### 4. (Optional) Add the sandbox for plugin development
+
+When developing this plugin, you can connect Claude Desktop to the `runIde` sandbox as a **second MCP server**, so AI tools call it directly without going through `curl`.
+
+Claude Desktop only supports stdio-based MCP servers, so use `mcp-remote` as a bridge:
+
+```json
+{
+  "mcpServers": {
+    "jetbrains": {
+      "command": "npx",
+      "args": ["-y", "@jetbrains/mcp-proxy"]
+    },
+    "intellij-sandbox": {
+      "command": "/opt/homebrew/bin/npx",
+      "args": ["-y", "mcp-remote", "http://127.0.0.1:64343/sse"],
+      "env": {
+        "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+      }
+    }
+  }
+}
+```
+
+> **Why `/opt/homebrew/bin/npx` and the `env.PATH`?**
+> Claude Desktop uses `/usr/local/bin` first in its PATH. If an older Node.js lives there (< 20.18.1), `mcp-remote` fails with a `ByteString` error. Forcing Homebrew's `npx` and its `PATH` ensures Node ≥ 20.18.1 is used.
+
+After restarting Claude Desktop, sandbox tools appear prefixed as `intellij-sandbox__get_open_editors`, `intellij-sandbox__start_run_configuration`, etc.
+
+> **Note:** When the sandbox is not running (`runIde` stopped), Claude Desktop will log connection errors for `intellij-sandbox` at startup — this is expected and harmless. Remove the entry when not actively developing the plugin.
 
 ## Development
 

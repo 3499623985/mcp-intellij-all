@@ -68,17 +68,31 @@ Si les tests échouent → **stopper immédiatement**, même si l'utilisateur a 
 
 Modifie la version dans `build.gradle.kts` avec l'outil Edit.
 
+## Étape 2b — Validation des @McpDescription (nouveaux tools uniquement)
+
+Si des nouveaux tools ont été détectés à l'étape 0, extraire la `@McpDescription` de chacun depuis le fichier `*Toolset.kt` correspondant et les afficher une par une :
+
+```
+📋 @McpDescription de `nom_du_tool` :
+<texte complet de la description>
+
+Ça te va ?
+```
+
+Attendre la validation pour chaque tool. Si l'utilisateur veut modifier → appliquer le changement dans le fichier Kotlin, puis continuer.
+
+→ Passer si aucun nouveau tool.
+
 ## Étape 3 — What's New (2ème digit uniquement)
 
-Si le 2ème digit a été incrémenté (nouveau tool), ouvrir `src/main/resources/META-INF/plugin.xml` et localiser la section `<change-notes>`.
+Si le 2ème digit a été incrémenté (nouveau tool), lire `build.gradle.kts` (section `changeNotes`) pour voir le style des entrées précédentes.
 
-Demander à l'utilisateur : **"Que dois-je écrire dans le 'What's New' pour la version X.Y.0 ?"**
-Attendre sa réponse, puis ajouter une entrée en tête de `<change-notes>` :
-```xml
-<b>X.Y.0</b>
-<ul>
-  <li>...</li>
-</ul>
+**Proposer une rédaction** basée sur les nouveaux tools détectés à l'étape 0, dans le style concis des entrées existantes (une seule phrase, code en `<code>`, pas de détails techniques).
+
+Demander : **"Ça te va, ou tu veux reformuler ?"**
+Attendre la validation (ou reformulation), puis ajouter l'entrée confirmée en tête de `changeNotes` dans `build.gradle.kts` :
+```
+<li><b>X.Y.0</b> — ...</li>
 ```
 → Passer si 3ème digit seulement.
 

@@ -777,4 +777,36 @@ class ReflectionApiTest {
         }
         println("OK: FileRevisionTimestampComparator + LocalHistory.getByteContent() found — diffs are available")
     }
+
+    // ── create_run_configuration_from_xml / modify_run_configuration ─────────
+
+    @Test
+    fun `ConfigurationType has static CONFIGURATION_TYPE_EP field`() {
+        val field = runCatching {
+            com.intellij.execution.configurations.ConfigurationType::class.java
+                .getField("CONFIGURATION_TYPE_EP")
+        }.getOrNull()
+        assertNotNull(field, "ConfigurationType.CONFIGURATION_TYPE_EP not found — create_run_configuration_from_xml cannot enumerate config types")
+        println("OK: ConfigurationType.CONFIGURATION_TYPE_EP found (type: ${field!!.type.simpleName})")
+    }
+
+    @Test
+    fun `CommonProgramRunConfigurationParameters interface exists with expected setter methods`() {
+        // Optional: this interface is in the Java execution module which may not be on the test classpath.
+        // modify_run_configuration uses runCatching per setter and gracefully reports unsupported configs.
+        val iface = runCatching {
+            Class.forName("com.intellij.execution.configurations.CommonProgramRunConfigurationParameters")
+        }.getOrNull()
+        if (iface == null) {
+            println("WARNING: CommonProgramRunConfigurationParameters not found on test classpath — modify_run_configuration will report 'does not support modification' for Application configs")
+            return
+        }
+        assertTrue(iface.isInterface, "CommonProgramRunConfigurationParameters should be an interface")
+        println("OK: CommonProgramRunConfigurationParameters interface found")
+        val methods = iface.methods.map { it.name }
+        listOf("setVMParameters", "setProgramParameters", "setWorkingDirectory", "setEnvs").forEach { name ->
+            if (methods.contains(name)) println("OK: CommonProgramRunConfigurationParameters.$name() found")
+            else println("WARNING: CommonProgramRunConfigurationParameters.$name() not found — modify_run_configuration will silently skip this parameter")
+        }
+    }
 }

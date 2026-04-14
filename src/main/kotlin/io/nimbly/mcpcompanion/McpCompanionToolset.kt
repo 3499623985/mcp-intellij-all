@@ -68,6 +68,11 @@ class McpCompanionToolset : McpToolset {
 - send_to_terminal       → send a command to a terminal tab and execute it (follow with get_terminal_output to read the result)
 
 ### Debug
+- list_run_configurations    → list all run configurations (name, type, running status)
+- start_run_configuration    → launch a named run config in run or debug mode
+- modify_run_configuration    → modify VM options, program args, env vars or working dir of any run config
+- get_run_configuration_xml       → get the full XML definition of a run configuration
+- create_run_configuration_from_xml → create a new run config from an XML definition (any type)
 - debug_run_configuration    → launch a named run config in debug mode
 - get_debug_variables        → read local variables from the current stack frame
 - get_breakpoints            → list all breakpoints with conditions

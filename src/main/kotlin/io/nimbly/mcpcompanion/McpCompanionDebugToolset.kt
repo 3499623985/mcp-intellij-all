@@ -1,7 +1,10 @@
 package io.nimbly.mcpcompanion
 
+import com.intellij.execution.ExecutionManager
 import com.intellij.execution.ProgramRunnerUtil
+import com.intellij.execution.RunManager
 import com.intellij.execution.executors.DefaultDebugExecutor
+import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.mcpserver.McpToolset
 import com.intellij.mcpserver.annotations.McpDescription
 import com.intellij.mcpserver.annotations.McpTool
@@ -202,6 +205,224 @@ class McpCompanionDebugToolset : McpToolset {
                 bp.conditionExpression = expr
                 "Condition set on breakpoint at $filePath:$line: $condition"
             }
+        }
+    }
+
+    // ── get_run_configuration_xml ─────────────────────────────────────────────
+
+    @McpTool(name = "get_run_configuration_xml")
+    @McpDescription(description = """
+        Returns the full XML definition of an existing run configuration.
+        The XML uses the same format as .idea/runConfigurations/*.xml (IntelliJ storage format).
+        Use this to inspect configuration details or as a template for create_run_configuration_from_xml.
+        configurationName: exact name from list_run_configurations.
+    """)
+    suspend fun get_run_configuration_xml(configurationName: String): String {
+        disabledMessage("get_run_configuration_xml")?.let { return it }
+        val project = coroutineContext.project
+
+        return runOnEdt {
+            val settings = RunManager.getInstance(project).findConfigurationByName(configurationName)
+                ?: return@runOnEdt "Run configuration '$configurationName' not found. Use list_run_configurations to see available configurations."
+
+            val element = org.jdom.Element("configuration")
+            settings.configuration.writeExternal(element)
+            // Add metadata attributes so the XML is self-contained and usable by create_run_configuration_from_xml
+            element.setAttribute("name", settings.name)
+            element.setAttribute("type", settings.type.id)
+            element.setAttribute("factoryName", settings.factory.name)
+            org.jdom.output.XMLOutputter(org.jdom.output.Format.getPrettyFormat()).outputString(element)
+        }
+    }
+
+    // ── create_run_configuration_from_xml ─────────────────────────────────────
+
+    @McpTool(name = "create_run_configuration_from_xml")
+    @McpDescription(description = """
+        Creates a new run configuration from an XML definition.
+        Works for ALL configuration types (Application, Gradle, Maven, Docker, JUnit, Kotlin, etc.).
+        Typical workflow:
+          1. Call get_run_configuration_xml on an existing config to get the XML template.
+          2. Modify the XML (change tasks, mainClass, arguments, etc.).
+          3. Call this tool with the modified XML and a new name.
+        name: name for the new configuration.
+        xml: full XML string as returned by get_run_configuration_xml (must include type and factoryName attributes).
+    """)
+    suspend fun create_run_configuration_from_xml(name: String, xml: String): String {
+        disabledMessage("create_run_configuration_from_xml")?.let { return it }
+        val project = coroutineContext.project
+
+        return runOnEdt {
+            val runManager = RunManager.getInstance(project)
+
+            if (runManager.findConfigurationByName(name) != null)
+                return@runOnEdt "A run configuration named '$name' already exists. Delete it first or choose a different name."
+
+            // Parse XML
+            val element = runCatching {
+                org.jdom.input.SAXBuilder().build(java.io.StringReader(xml)).rootElement
+            }.getOrElse { e -> return@runOnEdt "Invalid XML: ${e.message}" }
+
+            // Resolve configuration type
+            val typeId = element.getAttributeValue("type")
+                ?: return@runOnEdt "XML is missing the 'type' attribute (e.g. type=\"Application\")."
+
+            @Suppress("UNCHECKED_CAST")
+            val allTypes = runCatching {
+                (com.intellij.execution.configurations.ConfigurationType::class.java
+                    .getField("CONFIGURATION_TYPE_EP").get(null)
+                        as com.intellij.openapi.extensions.ExtensionPointName<com.intellij.execution.configurations.ConfigurationType>)
+                    .extensionList
+            }.getOrElse { emptyList() }
+
+            val configType = allTypes.find { it.id == typeId }
+                ?: return@runOnEdt "Unknown configuration type '$typeId'. " +
+                    "Available types: ${allTypes.joinToString(", ") { "${it.id} (${it.displayName})" }}"
+
+            val factoryName = element.getAttributeValue("factoryName")
+            val factory = (if (factoryName != null)
+                configType.configurationFactories.find { it.name == factoryName }
+                else null) ?: configType.configurationFactories.firstOrNull()
+                ?: return@runOnEdt "No factory found for type '$typeId'."
+
+            val settings = runManager.createConfiguration(name, factory)
+            runCatching { settings.configuration.readExternal(element) }
+                .onFailure { return@runOnEdt "Failed to apply XML: ${it.message}" }
+            settings.name = name  // override name from XML with requested name
+
+            runManager.addConfiguration(settings)
+            runManager.selectedConfiguration = settings
+
+            "Run configuration '$name' created (type: ${configType.displayName}). Use start_run_configuration to launch it."
+        }
+    }
+
+    // ── list_run_configurations ───────────────────────────────────────────────
+
+    @McpTool(name = "list_run_configurations")
+    @McpDescription(description = """
+        Lists all run configurations defined in the project.
+        Returns name, type, folder (if any), and whether the configuration is currently running.
+        Use the exact name with start_run_configuration or debug_run_configuration.
+    """)
+    suspend fun list_run_configurations(): String {
+        disabledMessage("list_run_configurations")?.let { return it }
+        val project = coroutineContext.project
+
+        @Serializable
+        data class RunConfigInfo(val name: String, val type: String, val folder: String? = null, val running: Boolean)
+
+        val configs = runOnEdt {
+            val runManager = RunManager.getInstance(project)
+            val execManager = ExecutionManager.getInstance(project)
+            runManager.allSettings.map { settings ->
+                val running = execManager.getRunningDescriptors { it == settings }.isNotEmpty()
+                RunConfigInfo(
+                    name    = settings.name,
+                    type    = settings.type.displayName,
+                    folder  = settings.folderName,
+                    running = running
+                )
+            }
+        }
+
+        if (configs.isEmpty()) return "No run configurations found in this project"
+        return Json.encodeToString(configs)
+    }
+
+    // ── start_run_configuration ───────────────────────────────────────────────
+
+    @McpTool(name = "start_run_configuration")
+    @McpDescription(description = """
+        Launches a run configuration by name and returns immediately (non-blocking).
+        mode: "run" (default) or "debug".
+        configurationName: exact name from list_run_configurations.
+        Use get_console_output to read output after launch.
+    """)
+    suspend fun start_run_configuration(configurationName: String, mode: String = "run"): String {
+        disabledMessage("start_run_configuration")?.let { return it }
+        val project = coroutineContext.project
+
+        val settings = runOnEdt {
+            RunManager.getInstance(project).findConfigurationByName(configurationName)
+        } ?: return "Run configuration '$configurationName' not found. Use list_run_configurations to see available configurations."
+
+        val executor = if (mode == "debug") DefaultDebugExecutor.getDebugExecutorInstance()
+                       else DefaultRunExecutor.getRunExecutorInstance()
+
+        withContext(Dispatchers.EDT) {
+            ProgramRunnerUtil.executeConfiguration(project, settings, executor)
+        }
+
+        return "Run configuration '$configurationName' started in $mode mode. Use get_console_output to follow output."
+    }
+
+    // ── modify_run_configuration ──────────────────────────────────────────────
+
+    @McpTool(name = "modify_run_configuration")
+    @McpDescription(description = """
+        Modifies common parameters of an existing run configuration (any type).
+        configurationName: exact name of the configuration to modify (use list_run_configurations).
+        vmOptions: JVM options string (e.g. "-Xmx1g -Dfoo=bar"). Set to "" to clear.
+        programArguments: program arguments string. Set to "" to clear.
+        workingDirectory: working directory path. Set to "" to use project root.
+        envVariables: environment variables as "KEY1=VALUE1,KEY2=VALUE2". Set to "" to clear.
+        Only parameters explicitly provided are changed — omitted ones are left untouched.
+        Works for Application, Gradle, Maven, JUnit, Kotlin and any config implementing CommonProgramRunConfigurationParameters.
+    """)
+    suspend fun modify_run_configuration(
+        configurationName: String,
+        vmOptions: String? = null,
+        programArguments: String? = null,
+        workingDirectory: String? = null,
+        envVariables: String? = null
+    ): String {
+        disabledMessage("modify_run_configuration")?.let { return it }
+        val project = coroutineContext.project
+
+        return runOnEdt {
+            val runManager = RunManager.getInstance(project)
+            val settings = runManager.findConfigurationByName(configurationName)
+                ?: return@runOnEdt "Run configuration '$configurationName' not found. Use list_run_configurations to see available configurations."
+
+            val config = settings.configuration
+            val iface = runCatching {
+                Class.forName("com.intellij.execution.configurations.CommonProgramRunConfigurationParameters")
+            }.getOrNull()
+
+            if (iface == null || !iface.isInstance(config))
+                return@runOnEdt "Configuration '$configurationName' (${settings.type.displayName}) does not support parameter modification via this tool."
+
+            val changed = mutableListOf<String>()
+
+            if (vmOptions != null) {
+                runCatching { iface.getMethod("setVMParameters", String::class.java).invoke(config, vmOptions) }
+                    .onSuccess { changed += "vmOptions" }
+            }
+            if (programArguments != null) {
+                runCatching { iface.getMethod("setProgramParameters", String::class.java).invoke(config, programArguments) }
+                    .onSuccess { changed += "programArguments" }
+            }
+            if (workingDirectory != null) {
+                val dir = workingDirectory.ifEmpty { project.basePath ?: "" }
+                runCatching { iface.getMethod("setWorkingDirectory", String::class.java).invoke(config, dir) }
+                    .onSuccess { changed += "workingDirectory" }
+            }
+            if (envVariables != null) {
+                val envMap = if (envVariables.isEmpty()) emptyMap()
+                else envVariables.split(",").mapNotNull {
+                    val eq = it.indexOf('=')
+                    if (eq > 0) it.substring(0, eq).trim() to it.substring(eq + 1).trim() else null
+                }.toMap()
+                runCatching {
+                    iface.getMethod("setEnvs", Map::class.java).invoke(config, envMap)
+                }.onSuccess { changed += "envVariables" }
+            }
+
+            if (changed.isEmpty())
+                "No parameters were modified (configuration type may not support them)"
+            else
+                "Run configuration '$configurationName' updated: ${changed.joinToString(", ")}. Use start_run_configuration to launch it."
         }
     }
 

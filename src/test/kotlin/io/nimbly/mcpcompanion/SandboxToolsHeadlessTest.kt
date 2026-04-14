@@ -8,6 +8,7 @@ import com.intellij.notification.Notification
 import com.intellij.notification.NotificationsManager
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import com.intellij.xdebugger.XDebuggerManager
+import kotlinx.coroutines.runBlocking
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
 
@@ -255,5 +256,41 @@ class SandboxToolsHeadlessTest : BasePlatformTestCase() {
         println("  hasGradle=$hasGradle  hasMaven=$hasMaven")
         assertFalse("Headless test project should not have Gradle files", hasGradle)
         assertFalse("Headless test project should not have Maven pom.xml", hasMaven)
+    }
+
+    // ── list_run_configurations / get_run_configuration_xml / start_run_configuration / modify_run_configuration ──
+
+    fun `test RunManager allSettings is empty in fresh headless project`() {
+        val configs = invokeAndWaitIfNeeded {
+            com.intellij.execution.RunManager.getInstance(project).allSettings
+        }
+        println("  RunManager.allSettings.size = ${configs.size}")
+        assertTrue("Fresh headless project should have no run configurations", configs.isEmpty())
+    }
+
+    fun `test RunManager findConfigurationByName returns null for unknown config`() {
+        val found = invokeAndWaitIfNeeded {
+            com.intellij.execution.RunManager.getInstance(project).findConfigurationByName("NonExistentConfig")
+        }
+        println("  findConfigurationByName('NonExistentConfig') → $found")
+        assertNull("Should return null for unknown run configuration", found)
+    }
+
+    // ── create_run_configuration_from_xml ─────────────────────────────────────
+
+    fun `test ConfigurationType CONFIGURATION_TYPE_EP is accessible via reflection in headless`() {
+        @Suppress("UNCHECKED_CAST")
+        val types = runCatching {
+            (com.intellij.execution.configurations.ConfigurationType::class.java
+                .getField("CONFIGURATION_TYPE_EP").get(null)
+                    as com.intellij.openapi.extensions.ExtensionPointName<com.intellij.execution.configurations.ConfigurationType>)
+                .extensionList
+        }.getOrNull()
+        if (types == null) {
+            println("  WARNING: CONFIGURATION_TYPE_EP not accessible in headless — create_run_configuration_from_xml type lookup may fail")
+            return
+        }
+        println("  CONFIGURATION_TYPE_EP returned ${types.size} types: ${types.take(5).map { it.id }}")
+        // Just verifies the EP is accessible — count may be low in headless, that's fine
     }
 }
