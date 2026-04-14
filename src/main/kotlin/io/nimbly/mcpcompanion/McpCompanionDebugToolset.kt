@@ -1,6 +1,5 @@
 package io.nimbly.mcpcompanion
 
-import com.intellij.execution.ExecutionManager
 import com.intellij.execution.ProgramRunnerUtil
 import com.intellij.execution.RunManager
 import com.intellij.execution.executors.DefaultDebugExecutor
@@ -302,7 +301,7 @@ class McpCompanionDebugToolset : McpToolset {
     @McpTool(name = "list_run_configurations")
     @McpDescription(description = """
         Lists all run configurations defined in the project.
-        Returns name, type, folder (if any), and whether the configuration is currently running.
+        Returns name, type, and folder (if any) for each configuration.
         Use the exact name with start_run_configuration or debug_run_configuration.
     """)
     suspend fun list_run_configurations(): String {
@@ -310,18 +309,14 @@ class McpCompanionDebugToolset : McpToolset {
         val project = coroutineContext.project
 
         @Serializable
-        data class RunConfigInfo(val name: String, val type: String, val folder: String? = null, val running: Boolean)
+        data class RunConfigInfo(val name: String, val type: String, val folder: String? = null)
 
         val configs = runOnEdt {
-            val runManager = RunManager.getInstance(project)
-            val execManager = ExecutionManager.getInstance(project)
-            runManager.allSettings.map { settings ->
-                val running = execManager.getRunningDescriptors { it == settings }.isNotEmpty()
+            RunManager.getInstance(project).allSettings.map { settings ->
                 RunConfigInfo(
-                    name    = settings.name,
-                    type    = settings.type.displayName,
-                    folder  = settings.folderName,
-                    running = running
+                    name   = settings.name,
+                    type   = settings.type.displayName,
+                    folder = settings.folderName
                 )
             }
         }

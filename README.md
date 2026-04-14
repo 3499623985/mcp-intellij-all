@@ -32,7 +32,7 @@ An IntelliJ IDEA plugin that extends the built-in [JetBrains MCP Server](https:/
 ### Debug
 | Tool | Description |
 |------|-------------|
-| `list_run_configurations` | Lists all run configurations with name, type, and running status |
+| `list_run_configurations` | Lists all run configurations with name, type, and folder |
 | `start_run_configuration` | Launches a named run configuration in run or debug mode |
 | `modify_run_configuration` | Modifies VM options, program arguments, env vars, or working dir of a run configuration |
 | `get_run_configuration_xml` | Returns the full XML definition of a run configuration |
