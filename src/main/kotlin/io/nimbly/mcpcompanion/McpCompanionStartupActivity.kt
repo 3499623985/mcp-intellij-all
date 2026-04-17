@@ -20,6 +20,9 @@ class McpCompanionStartupActivity : ProjectActivity {
 
     override suspend fun execute(project: Project) {
 
+        // Eagerly start background-process polling so get_ide_snapshot reflects live activity.
+        ProcessTracker.getInstance(project)
+
         // Register Escape key listener on all current and future editors
         ApplicationManager.getApplication().invokeLater {
             EditorFactory.getInstance().allEditors.forEach { addEscapeListener(it) }

@@ -41,6 +41,7 @@
 
         <h4>Diagnostic &amp; Processes</h4>
         <ul>
+            <li><b>get_ide_snapshot</b> — Lightweight snapshot of what the developer is currently doing: active file + caret, selection, open files, active runs/debug, indexing, background processes. Designed for frequent polling (e.g. a Claude Code hook to keep the AI aware of the current context).</li>
             <li><b>get_ide_settings</b> — Read IntelliJ IDE settings: Gradle build delegation, SDK, compiler, encoding. Pass a keyword (<code>search</code>) to filter, a <code>key</code> for direct lookup, or a <code>prefix</code> (with optional <code>depth</code>) to retrieve all settings in a subtree.</li>
             <li><b>get_intellij_diagnostic</b> — One-call diagnostic: indexing status, active notifications, running/paused processes, and <code>idea.log</code> WARN/ERROR tail. Use this first when something is not working as expected.</li>
             <li><b>get_running_processes</b> — Lists all active and paused background processes (indexing, Gradle syncs, builds, etc.).</li>

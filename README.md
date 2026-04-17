@@ -47,8 +47,9 @@ An IntelliJ IDEA plugin that extends the built-in [JetBrains MCP Server](https:/
 ### Diagnostic & Processes
 | Tool | Description |
 |------|-------------|
-| `get_intellij_diagnostic` 🔬 | One-call diagnostic: indexing status, notifications, running processes, and idea.log WARN/ERROR tail |
-| `get_running_processes` | Lists active and paused background processes in IntelliJ |
+| `get_ide_snapshot` | Lightweight snapshot (active file, selection, runs, debug, indexing, background tasks + recently-finished ones) — designed for frequent polling by a Claude Code hook |
+| `get_intellij_diagnostic` 🔬 | One-call diagnostic: indexing status, notifications, running processes, recently-finished tasks, and idea.log WARN/ERROR tail |
+| `get_running_processes` | Lists active background processes + tasks finished in the last 3 minutes (Gradle sync, indexing, compilation, etc.) |
 | `manage_process` | Pauses, resumes, or cancels a background process by title |
 | `get_ide_settings` | Read IntelliJ settings: Gradle, SDK, compiler, encoding — search by keyword, direct key lookup, or prefix subtree with optional depth |
 

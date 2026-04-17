@@ -2,8 +2,10 @@
 
 ## High priority
 
-- **stop_run** 
-- **get_open_files** mettre fichier aillant le focus en 1er
+- **get_gradle_tasks** — List available Gradle tasks for the project
+- **run_gradle_task** — Execute a specific Gradle task
+
+- **get_open_editors** mettre fichier aillant le focus en 1er
 
 ## New tools
 
@@ -19,5 +21,3 @@
 - **navigate_to_bookmark** — Navigate to a bookmark by name/mnemonic
 
 - **get_implementations** — Find implementations of an interface or abstract class
-- **get_gradle_tasks** — List available Gradle tasks for the project
-- **run_gradle_task** — Execute a specific Gradle task

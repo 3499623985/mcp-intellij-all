@@ -81,6 +81,8 @@ class McpCompanionToolset : McpToolset {
 - mute_breakpoints           → enable/disable all breakpoints at once
 
 ### Diagnostic & Processes
+- get_ide_snapshot           → compact snapshot: active file + caret, selection, open files, active runs, debug paused, indexing, background tasks
+                               designed for frequent polling (e.g. a Claude Code UserPromptSubmit hook) so the AI always knows the current context
 - get_intellij_diagnostic    → notifications, errors, background tasks, ERROR/SEVERE from idea.log (last 5 min) — call this when something looks wrong
 - get_running_processes      → list background tasks (indexing, Gradle sync, …) — call this when IntelliJ seems busy
 - manage_process             → cancel / pause / resume a background task by title (partial match)

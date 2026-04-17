@@ -13,7 +13,7 @@ val secrets = Properties().apply {
 }
 
 group = "io.nimbly"
-version = "2.10.2"
+version = "2.11.0"
 
 repositories {
     mavenCentral()
@@ -46,6 +46,7 @@ intellijPlatform {
         }
         changeNotes = """
             <ul>
+                <li><b>2.11.0</b> — New tool: <code>get_ide_snapshot</code> — compact snapshot of the current IDE context (active file + caret, selection, open files, runs, debug paused location, indexing, background tasks, recently-finished tasks) designed for frequent polling by a Claude Code <code>UserPromptSubmit</code> hook.</li>
                 <li><b>2.10.0</b> — Run configurations can now be listed, launched, created from XML, and modified directly from your AI client: <code>list_run_configurations</code>, <code>start_run_configuration</code>, <code>get_run_configuration_xml</code>, <code>create_run_configuration_from_xml</code>, <code>modify_run_configuration</code>.</li>
                 <li><b>2.9.0</b> — New tools: <code>list_inspections</code> (browse the active inspection profile) and <code>run_inspections</code> (run inspections on a file or project, with severity filter).</li>
                 <li><b>2.8.0</b> — New tool: <code>apply_quick_fix</code> — applies an IDE quick fix by name (like Alt+Enter).</li>

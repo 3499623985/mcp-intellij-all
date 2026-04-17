@@ -223,7 +223,7 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
                 }
             }
 
-            group("Claude Code Setup") {
+            group("Claude Code — Setup") {
                 row {
                     button("Add to CLAUDE.md") { addClaudeMd() }
                         .comment("Adds a one-liner to CLAUDE.md in the current project so Claude calls get_mcp_companion_overview on startup")
@@ -244,6 +244,23 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
                         Toolkit.getDefaultToolkit().systemClipboard
                             .setContents(StringSelection(snippet.trim()), null)
                     }
+                }
+            }
+
+            // ── Claude Code: live IDE context hook ─────────────────────────────
+            group("Claude Code — Live IDE Context Hook") {
+                row {
+                    comment(
+                        "<html>Have Claude Code auto-inject the current IDE state (active file, selection, runs,<br>" +
+                        "build, indexing) into every prompt, so the AI always knows what you're working on<br>" +
+                        "— no need to tell it which file is open.</html>"
+                    )
+                }
+                row {
+                    button("Copy setup prompt for Claude Code") {
+                        Toolkit.getDefaultToolkit().systemClipboard
+                            .setContents(StringSelection(HOOK_SETUP_PROMPT), null)
+                    }.comment("Paste into Claude Code — it will create the hook and wire it into <code>~/.claude/settings.json</code>.")
                 }
             }
 
@@ -480,6 +497,39 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
     companion object {
         private const val BAR_W = 68
         private const val COUNT_W = 26
+
+        /**
+         * Prompt to paste into Claude Code — it sets up the UserPromptSubmit hook for us,
+         * far easier than copy-pasting a bash script and JSON snippet by hand.
+         */
+        val HOOK_SETUP_PROMPT: String = """
+            Please set up a Claude Code UserPromptSubmit hook that injects my IntelliJ IDE state
+            into every prompt I send you.
+
+            What the hook should do:
+            - Call the MCP tool `get_ide_snapshot` on IntelliJ's MCP server via its SSE endpoint
+              (JSON-RPC method `tools/call`, no arguments).
+            - Print the JSON result wrapped in <ide_context>...</ide_context> so it gets injected
+              into my next prompt.
+            - If no IntelliJ instance responds within 3 seconds total, exit 0 silently — the hook
+              must never slow my prompts down.
+
+            Port discovery:
+            - The default MCP Server port is 64342, but users can change it in IntelliJ settings,
+              and multiple IDEs can run side-by-side on consecutive ports. Have the script probe
+              127.0.0.1 on ports 64342, 64343, 64344, 64345 and use the first one that returns a
+              valid SSE sessionId. Allow override via an `INTELLIJ_MCP_PORT` env var.
+
+            What you should do:
+            1. Create the hook at ~/.claude/hooks/intellij-ide-context.sh and chmod +x it.
+               Use bash + curl + python3. SSE handshake: GET /sse returns a sessionId on the
+               first `data:` line; then POST a tools/call request to /message?sessionId=<id>
+               and read the response from the same SSE stream.
+            2. Register it in ~/.claude/settings.json under hooks.UserPromptSubmit —
+               MERGE with any existing hooks, do not overwrite.
+            3. Run the script once (with IntelliJ open) to verify its output, and show me the
+               <ide_context>...</ide_context> payload.
+        """.trimIndent()
 
         fun isMcpServerEnabled(): Boolean = try {
             val cls = Class.forName("com.intellij.mcpserver.settings.McpServerSettings")

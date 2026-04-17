@@ -72,7 +72,7 @@ class McpCompanionSettings : PersistentStateComponent<McpCompanionSettings.State
                 "get_breakpoints", "add_conditional_breakpoint", "set_breakpoint_condition", "mute_breakpoints"
             ),
             "Diagnostic & Processes" to listOf(
-                "get_intellij_diagnostic", "get_running_processes", "manage_process", "get_ide_settings"
+                "get_ide_snapshot", "get_intellij_diagnostic", "get_running_processes", "manage_process", "get_ide_settings"
             ),
             "Code Analysis" to listOf(
                 "get_file_problems", "get_quick_fixes", "apply_quick_fix",

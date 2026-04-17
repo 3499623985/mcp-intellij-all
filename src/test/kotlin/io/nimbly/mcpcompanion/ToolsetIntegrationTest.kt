@@ -243,7 +243,7 @@ class ToolsetIntegrationTest : BasePlatformTestCase() {
     // ── Diagnostic ────────────────────────────────────────────────────────────
 
     fun `test collectRunningProcesses does not throw`() {
-        val processes = McpCompanionDiagnosticToolset().collectRunningProcesses()
+        val processes = McpCompanionDiagnosticToolset().collectRunningProcesses(project)
         assertNotNull("Should return non-null list", processes)
         // In headless there are typically no background tasks
     }

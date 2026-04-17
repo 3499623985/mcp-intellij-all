@@ -162,45 +162,67 @@ class McpCompanionDiagnosticToolset : McpToolset {
 
     @McpTool(name = "get_running_processes")
     @McpDescription(description = """
-        Returns all background processes currently running in IntelliJ — the same tasks visible
-        in the status bar (indexing, Gradle sync, compilation, inspections, etc.).
-        For each process:
-        - title: main label of the task
-        - details: secondary line (current file, step, etc.) if available
-        - progress: 0.0–1.0, or null if indeterminate
-        - cancellable: whether the task can be cancelled
-        Call this when IntelliJ seems busy, slow, or stuck to understand what it is doing.
+        Returns IntelliJ background-task activity — the same tasks visible in the status bar
+        (indexing, Gradle sync, compilation, inspections, etc.) — as two lists:
+
+        - running: tasks currently in progress
+          * title: main label of the task
+          * details: secondary line (current file, step, etc.) if available
+          * progress: 0.0–1.0, or null if indeterminate
+          * cancellable: whether the task can be cancelled
+          * paused: true if the task is currently suspended
+
+        - recentlyFinished: up to 10 tasks that finished in the last 3 minutes
+          * title, ranMs (how long it ran), endedAgoMs (how long ago it ended)
+
+        Call this when IntelliJ seems busy, slow, or stuck to understand what it is doing,
+        or right after an event to see what just completed.
     """)
     suspend fun get_running_processes(): String {
         disabledMessage("get_running_processes")?.let { return it }
-        val processes = collectRunningProcesses()
-        return if (processes.isEmpty()) "No background processes running"
-        else Json.encodeToString(processes)
+        val project = coroutineContext.project
+        val running = collectRunningProcesses(project)
+        val finished = collectRecentlyFinished(project)
+        if (running.isEmpty() && finished.isEmpty()) return "No background processes running"
+        return Json.encodeToString(RunningProcessesResult(running = running, recentlyFinished = finished))
     }
 
-    fun collectRunningProcesses(): List<RunningProcess> {
+    /** Snapshots the tracker's recently-finished queue for inclusion in diagnostic tools. */
+    fun collectRecentlyFinished(project: com.intellij.openapi.project.Project): List<SnapshotFinishedProcess> {
+        val now = System.currentTimeMillis()
+        return ProcessTracker.getInstance(project).recentlyFinished().map {
+            SnapshotFinishedProcess(title = it.title, ranMs = it.ranMs, endedAgoMs = now - it.endedAt)
+        }
+    }
+
+    /**
+     * Returns all active background processes (same set as the "Processes" popup), fed by
+     * [ProcessTracker] which polls `StatusBarEx.getBackgroundProcesses()` — this catches
+     * external-system tasks (Gradle sync, "Indexing files" on sync, Maven import) that
+     * `CoreProgressManager.getCurrentIndicators()` misses.
+     */
+    fun collectRunningProcesses(project: com.intellij.openapi.project.Project): List<RunningProcess> {
+        val tracker = ProcessTracker.getInstance(project)
         val seen = mutableSetOf<String>()
-        val processes = mutableListOf<RunningProcess>()
-
-        for (ind in currentIndicators()) {
-            if (!ind.isRunning) continue
-            val title = ind.taskTitle() ?: ind.text?.takeIf { it.isNotBlank() } ?: continue
-            if (!seen.add(title)) continue
-            val details = ind.text2?.takeIf { it.isNotBlank() }
-            val progress = if (ind.isIndeterminate) null else ind.fraction.takeIf { it in 0.0..1.0 }
+        val result = mutableListOf<RunningProcess>()
+        for (task in tracker.active()) {
+            if (!seen.add(task.title)) continue
+            val ind = task.indicator
+            val details = runCatching { ind.text2 }.getOrNull()?.takeIf { it.isNotBlank() }
+            val progress = runCatching {
+                if (ind.isIndeterminate) null else ind.fraction.takeIf { it in 0.0..1.0 }
+            }.getOrNull()
             val cancellable = ind.reflectBoolean("isCancellable")
-            processes += RunningProcess(title = title, details = details, progress = progress, cancellable = cancellable, paused = false)
+            val paused = runCatching { getSuspender(ind)?.isSuspended() == true }.getOrDefault(false)
+            result += RunningProcess(
+                title = task.title,
+                details = details,
+                progress = progress,
+                cancellable = cancellable,
+                paused = paused
+            )
         }
-
-        for ((ind, suspender) in allSuspenderEntries()) {
-            if (!suspender.isSuspended()) continue
-            val title = ind.taskTitle() ?: ind.text?.takeIf { it.isNotBlank() } ?: continue
-            if (!seen.add("paused:$title")) continue
-            val progress = if (ind.isIndeterminate) null else ind.fraction.takeIf { it in 0.0..1.0 }
-            processes += RunningProcess(title = title, progress = progress, paused = true)
-        }
-
-        return processes
+        return result
     }
 
     // ── manage_process ────────────────────────────────────────────────────────
@@ -217,23 +239,14 @@ class McpCompanionDiagnosticToolset : McpToolset {
     """)
     suspend fun manage_process(title: String, action: String): String {
         disabledMessage("manage_process")?.let { return it }
-        var match = currentIndicators().firstOrNull { ind ->
-            if (!ind.isRunning) return@firstOrNull false
-            val label = ind.taskTitle() ?: ind.text ?: ""
-            label.contains(title, ignoreCase = true)
-        }
-        var matchedSuspender: Any? = match?.let { getSuspender(it) }
-        if (match == null) {
-            val entry = allSuspenderEntries().firstOrNull { (ind, _) ->
-                val label = ind.taskTitle() ?: ind.text ?: ""
-                label.contains(title, ignoreCase = true)
-            }
-            match = entry?.first
-            matchedSuspender = entry?.second
-        }
+        val project = coroutineContext.project
+        val tracker = ProcessTracker.getInstance(project)
+        val active = tracker.findActiveByTitle(title)
+        val match: ProgressIndicator? = active?.indicator
+        val matchedSuspender: Any? = match?.let { getSuspender(it) }
         if (match == null) return "No running process found matching \"$title\""
 
-        val label = match.taskTitle() ?: match.text?.takeIf { it.isNotBlank() } ?: title
+        val label = active.title
         return when (action.lowercase().trim()) {
             "cancel" -> {
                 if (match.reflectBoolean("isCancellable") == false) "Process \"$label\" is not cancellable"
@@ -262,11 +275,6 @@ class McpCompanionDiagnosticToolset : McpToolset {
         }
     }
 
-    private fun ProgressIndicator.taskTitle(): String? = try {
-        val taskInfo = javaClass.getMethod("getTaskInfo").invoke(this)
-        taskInfo?.javaClass?.getMethod("getTitle")?.invoke(taskInfo) as? String
-    } catch (_: Exception) { null }?.takeIf { it.isNotBlank() }
-
     private fun ProgressIndicator.reflectBoolean(method: String): Boolean? = try {
         javaClass.getMethod(method).invoke(this) as? Boolean
     } catch (_: Exception) { null }
@@ -281,31 +289,201 @@ class McpCompanionDiagnosticToolset : McpToolset {
         javaClass.getMethod(method, *paramTypes).invoke(this, *args); success
     } catch (_: Exception) { failure }
 
-    @Suppress("UNCHECKED_CAST")
-    private fun currentIndicators(): List<ProgressIndicator> = try {
-        Class.forName("com.intellij.openapi.progress.impl.CoreProgressManager")
-            .getMethod("getCurrentIndicators")
-            .invoke(null) as? List<ProgressIndicator> ?: emptyList()
-    } catch (_: Exception) { emptyList() }
-
     private fun getSuspender(indicator: ProgressIndicator): Any? = try {
         val cls = Class.forName("com.intellij.openapi.progress.impl.ProgressSuspender")
         cls.getMethod("getSuspender", ProgressIndicator::class.java).invoke(null, indicator)
     } catch (_: Exception) { null }
 
-    @Suppress("UNCHECKED_CAST")
-    private fun allSuspenderEntries(): List<Pair<ProgressIndicator, Any>> = try {
-        val cls = Class.forName("com.intellij.openapi.progress.impl.ProgressSuspender")
-        val field = cls.getDeclaredField("ourProgressToSuspenderMap").also { it.isAccessible = true }
-        val map = field.get(null) as? Map<ProgressIndicator, Any> ?: return emptyList()
-        map.entries.map { it.key to it.value }
-    } catch (_: Exception) { emptyList() }
-
     private fun Any.isSuspended(): Boolean =
         runCatching { javaClass.getMethod("isSuspended").invoke(this) as? Boolean ?: false }.getOrDefault(false)
 
-    private fun Any.suspendedText(): String? =
-        runCatching { javaClass.getMethod("getSuspendedText").invoke(this) as? String }.getOrNull()
+    // ── get_ide_snapshot ──────────────────────────────────────────────────────
+
+    @McpTool(name = "get_ide_snapshot")
+    @McpDescription(description = """
+        Lightweight snapshot of what the developer is currently doing in the IDE.
+        Designed for frequent polling (e.g. a Claude Code UserPromptSubmit hook)
+        so the AI assistant always knows the current context without being told.
+
+        Returns a compact JSON payload with:
+        - activeFile: path + line of the focused editor (e.g. "/path/File.java:42")
+        - selection: currently selected text (truncated to 100 chars) if any
+        - openFiles: list of open file paths (first 10)
+        - activeFileProblems: count of errors and warnings in the active editor (from IDE analysis)
+        - build: last build summary — total ERROR and WARNING nodes in the Build tool window
+        - runs: all run/debug tabs currently open, each with:
+            * name, mode ("run"/"debug")
+            * status: "running", "paused" (debug only), "finishedOk", "finishedError", or "finished"
+            * exitCode for finished runs (if available)
+            * pausedAt: "file:line" of the top stack frame when the debugger is paused
+        - indexing: true if the IDE is currently indexing
+        - backgroundProcesses: in-progress tasks from the status bar (Gradle sync, indexing, etc.),
+          each with title, startedAgoMs, and progress (0..1 if determinate, null if indeterminate)
+        - recentlyFinished: up to 10 tasks that finished in the last 3 minutes (title, ranMs, endedAgoMs)
+
+        This tool is read-only and fast. Safe to call on every turn.
+    """)
+    suspend fun get_ide_snapshot(): String {
+        disabledMessage("get_ide_snapshot")?.let { return it }
+        val project = coroutineContext.project
+
+        val snapshot = runOnEdt {
+            val fem = com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project)
+            val openPaths = fem.openFiles.map { it.path }
+            val editor = fem.selectedTextEditor
+            val selectedFilePath = fem.selectedFiles.firstOrNull()?.path
+
+            var activeFile: String? = null
+            var selection: String? = null
+            var activeFileProblems: SnapshotProblems? = null
+            if (editor != null && selectedFilePath != null) {
+                val line = editor.caretModel.logicalPosition.line + 1
+                activeFile = "$selectedFilePath:$line"
+                if (editor.selectionModel.hasSelection()) {
+                    val text = editor.selectionModel.selectedText
+                    if (!text.isNullOrEmpty()) {
+                        selection = if (text.length > 100) text.take(100) + "…" else text
+                    }
+                }
+                activeFileProblems = countEditorProblems(editor.document, project)
+            }
+
+            val runs = collectRunsSnapshot(project)
+            val indexing = DumbService.getInstance(project).isDumb
+            val build = countBuildProblems(project)
+
+            val now = System.currentTimeMillis()
+            val tracker = ProcessTracker.getInstance(project)
+            val bg = tracker.active().map { task ->
+                val ind = task.indicator
+                val progress = runCatching {
+                    if (ind.isIndeterminate) null else ind.fraction.takeIf { it in 0.0..1.0 }
+                }.getOrNull()
+                SnapshotProcess(title = task.title, startedAgoMs = now - task.startedAt, progress = progress)
+            }
+            val finished = collectRecentlyFinished(project)
+
+            IdeSnapshot(
+                activeFile = activeFile,
+                selection = selection,
+                openFileCount = openPaths.size,
+                openFiles = openPaths.take(10),
+                activeFileProblems = activeFileProblems,
+                build = build,
+                runs = runs,
+                indexing = indexing,
+                backgroundProcesses = bg,
+                recentlyFinished = finished
+            )
+        }
+        return Json.encodeToString(snapshot)
+    }
+
+    /** Collects all open run/debug tabs with their current status (running, paused, finished ok/error). */
+    @Suppress("DEPRECATION")
+    private fun collectRunsSnapshot(project: com.intellij.openapi.project.Project): List<SnapshotRun> {
+        val debugSessions = com.intellij.xdebugger.XDebuggerManager.getInstance(project).debugSessions
+        // Index debug sessions by their ProcessHandler (stable identity across the lifetime of the process),
+        // with a fallback index by RunContentDescriptor reference.
+        val debugByHandler = debugSessions
+            .mapNotNull { sess -> runCatching { sess.debugProcess.processHandler to sess }.getOrNull() }
+            .toMap()
+        val debugByDescriptor = debugSessions
+            .mapNotNull { sess -> sess.runContentDescriptor?.let { it to sess } }
+            .toMap()
+
+        return com.intellij.execution.ui.RunContentManager.getInstance(project)
+            .allDescriptors
+            .map { desc ->
+                val ph = desc.processHandler
+                val session = (ph?.let { debugByHandler[it] }) ?: debugByDescriptor[desc]
+                val mode = if (session != null || desc.contentToolWindowId == "Debug") "debug" else "run"
+
+                val exitCode = if (ph != null && ph.isProcessTerminated)
+                    runCatching { ph.javaClass.getMethod("getExitCode").invoke(ph) as? Int }.getOrNull()
+                else null
+
+                val status = when {
+                    ph == null -> "unknown"
+                    !ph.isProcessTerminated -> if (session?.isPaused == true) "paused" else "running"
+                    exitCode == null -> "finished"
+                    exitCode == 0 -> "finishedOk"
+                    else -> "finishedError"
+                }
+
+                // For paused debug sessions, report the source location of the top frame
+                val pausedAt = if (status == "paused" && session != null) {
+                    val pos = runCatching { session.currentPosition }.getOrNull()
+                        ?: runCatching { session.topFramePosition }.getOrNull()
+                    pos?.let { "${it.file.path}:${it.line + 1}" }
+                } else null
+
+                SnapshotRun(
+                    name     = desc.displayName,
+                    mode     = mode,
+                    status   = status,
+                    exitCode = exitCode,
+                    pausedAt = pausedAt
+                )
+            }
+    }
+
+    /** Counts daemon highlights (errors + warnings) in an editor document. Keeps the snapshot light. */
+    private fun countEditorProblems(document: com.intellij.openapi.editor.Document, project: com.intellij.openapi.project.Project): SnapshotProblems? {
+        val markupModel = com.intellij.openapi.editor.impl.DocumentMarkupModel.forDocument(document, project, false)
+            ?: return null
+        var errors = 0
+        var warnings = 0
+        markupModel.allHighlighters
+            .mapNotNull { it.errorStripeTooltip as? com.intellij.codeInsight.daemon.impl.HighlightInfo }
+            .filter { !it.description.isNullOrBlank() }
+            .forEach { info ->
+                when {
+                    info.severity >= com.intellij.lang.annotation.HighlightSeverity.ERROR -> errors++
+                    info.severity >= com.intellij.lang.annotation.HighlightSeverity.WARNING -> warnings++
+                }
+            }
+        return SnapshotProblems(errors = errors, warnings = warnings)
+    }
+
+    /** Counts ERROR/WARNING nodes in the Build tool window tree, across all tabs. */
+    private fun countBuildProblems(project: com.intellij.openapi.project.Project): BuildSummary? {
+        val tw = com.intellij.openapi.wm.ToolWindowManager.getInstance(project).getToolWindow("Build")
+            ?: return null
+        var errors = 0
+        var warnings = 0
+        var hasContent = false
+        tw.contentManager.contents.forEach { content ->
+            val trees = com.intellij.util.ui.UIUtil.findComponentsOfType(content.component, javax.swing.JTree::class.java)
+            trees.firstOrNull()?.let { tree ->
+                val model = tree.model
+                val root = model.root ?: return@let
+                hasContent = true
+                walkTreeForSeverity(model, root) { sev ->
+                    when (sev) {
+                        "ERROR"   -> errors++
+                        "WARNING" -> warnings++
+                    }
+                }
+            }
+        }
+        return if (hasContent) BuildSummary(errors = errors, warnings = warnings) else null
+    }
+
+    private fun walkTreeForSeverity(model: javax.swing.tree.TreeModel, node: Any, onSeverity: (String) -> Unit) {
+        val userObject = (node as? javax.swing.tree.DefaultMutableTreeNode)?.userObject
+        if (userObject != null) {
+            val cls = userObject.javaClass
+            val sev = when {
+                (runCatching { cls.methods.find { it.name == "getHasProblems" }?.invoke(userObject) as? Boolean }.getOrNull()) == true -> "ERROR"
+                (runCatching { cls.methods.find { it.name == "getVisibleAsWarning" }?.invoke(userObject) as? Boolean }.getOrNull()) == true -> "WARNING"
+                else -> null
+            }
+            if (sev != null) onSeverity(sev)
+        }
+        val count = model.getChildCount(node)
+        for (i in 0 until count) walkTreeForSeverity(model, model.getChild(node, i), onSeverity)
+    }
 
     // ── get_intellij_diagnostic ───────────────────────────────────────────────
 
@@ -317,6 +495,7 @@ class McpCompanionDiagnosticToolset : McpToolset {
         - indexing: whether the IDE is currently indexing files (DumbService)
         - notifications: active notifications visible in the Event Log (errors, warnings)
         - processes: background processes currently running or paused (same as get_running_processes)
+        - recentlyFinished: up to 10 tasks that finished in the last 3 minutes
         - logEntries: log entries from idea.log in the last N minutes, including stack traces
         minutesBack: how many minutes back to scan idea.log (default: 5)
         level: minimum log level to include — "error" (ERROR+SEVERE only), "warn" (adds WARN), "info" (adds INFO). Default: "error"
@@ -342,7 +521,8 @@ class McpCompanionDiagnosticToolset : McpToolset {
                 }.toList()
         }
 
-        val processes = collectRunningProcesses()
+        val processes = collectRunningProcesses(project)
+        val recentlyFinished = collectRecentlyFinished(project)
 
         val logEntries = readIdeaLogErrors(minutesBack = minutesBack, level = level)
 
@@ -350,6 +530,7 @@ class McpCompanionDiagnosticToolset : McpToolset {
             indexing = indexing,
             notifications = notifications,
             processes = processes,
+            recentlyFinished = recentlyFinished,
             logEntries = logEntries
         ))
     }
@@ -400,7 +581,26 @@ class McpCompanionDiagnosticToolset : McpToolset {
 // ── Data classes ──────────────────────────────────────────────────────────────
 
 @Serializable data class RunningProcess(val title: String, val details: String? = null, val progress: Double? = null, val cancellable: Boolean? = null, val paused: Boolean = false)
+@Serializable data class RunningProcessesResult(val running: List<RunningProcess>, val recentlyFinished: List<SnapshotFinishedProcess> = emptyList())
 
-@Serializable data class IntellijDiagnostic(val indexing: IndexingStatus, val notifications: List<DiagnosticNotification>, val processes: List<RunningProcess>, val logEntries: List<String>)
+@Serializable data class IdeSnapshot(
+    val activeFile: String? = null,
+    val selection: String? = null,
+    val openFileCount: Int,
+    val openFiles: List<String>,
+    val activeFileProblems: SnapshotProblems? = null,
+    val build: BuildSummary? = null,
+    val runs: List<SnapshotRun>,
+    val indexing: Boolean,
+    val backgroundProcesses: List<SnapshotProcess>,
+    val recentlyFinished: List<SnapshotFinishedProcess> = emptyList()
+)
+@Serializable data class SnapshotRun(val name: String, val mode: String, val status: String, val exitCode: Int? = null, val pausedAt: String? = null)
+@Serializable data class SnapshotProblems(val errors: Int, val warnings: Int)
+@Serializable data class BuildSummary(val errors: Int, val warnings: Int)
+@Serializable data class SnapshotProcess(val title: String, val startedAgoMs: Long, val progress: Double? = null)
+@Serializable data class SnapshotFinishedProcess(val title: String, val ranMs: Long, val endedAgoMs: Long)
+
+@Serializable data class IntellijDiagnostic(val indexing: IndexingStatus, val notifications: List<DiagnosticNotification>, val processes: List<RunningProcess>, val recentlyFinished: List<SnapshotFinishedProcess> = emptyList(), val logEntries: List<String>)
 @Serializable data class IndexingStatus(val active: Boolean)
 @Serializable data class DiagnosticNotification(val type: String, val title: String, val content: String? = null, val groupId: String? = null)

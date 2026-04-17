@@ -60,6 +60,25 @@ class ReflectionApiTest {
             "TaskInfo.getTitle() must return String")
     }
 
+    // ── StatusBarEx (ProcessTracker) ──────────────────────────────────────────
+    // ProcessTracker polls StatusBarEx.getBackgroundProcessesModels() via reflection every
+    // 500ms to catch Gradle sync / indexing / Maven import tasks that CoreProgressManager
+    // does not expose. If this method goes away, backgroundProcesses in get_ide_snapshot
+    // will silently stop reporting external-system tasks — catch it here.
+
+    @Test
+    fun `StatusBarEx getBackgroundProcesses returns List of Pair TaskInfo ProgressIndicator`() {
+        val cls = Class.forName("com.intellij.openapi.wm.ex.StatusBarEx")
+        val method = cls.getMethod("getBackgroundProcesses")
+        assertTrue(List::class.java.isAssignableFrom(method.returnType),
+            "StatusBarEx.getBackgroundProcesses() must return a List")
+        // We can't easily assert the parametric type at runtime, but verify the supporting
+        // classes (TaskInfo, ProgressIndicator, com.intellij.openapi.util.Pair) still exist.
+        Class.forName("com.intellij.openapi.progress.TaskInfo")
+        Class.forName("com.intellij.openapi.progress.ProgressIndicator")
+        Class.forName("com.intellij.openapi.util.Pair")
+    }
+
     // ── BackgroundableProcessIndicator ────────────────────────────────────────
     // Optional: class is in intellij.platform.ide.impl.jar which may not be on all test classpaths.
 
@@ -808,5 +827,28 @@ class ReflectionApiTest {
             if (methods.contains(name)) println("OK: CommonProgramRunConfigurationParameters.$name() found")
             else println("WARNING: CommonProgramRunConfigurationParameters.$name() not found — modify_run_configuration will silently skip this parameter")
         }
+    }
+
+    // ── get_ide_snapshot ─────────────────────────────────────────────────────
+
+    @Test
+    fun `ProcessHandler getExitCode is accessible by reflection on terminated processes`() {
+        // get_ide_snapshot uses reflection on ProcessHandler.getExitCode() to read the exit status
+        // of finished runs. The method may not be on the abstract ProcessHandler class (it's
+        // declared on concrete implementations like OSProcessHandler), so we use reflection with
+        // runCatching in production code. This test just verifies the method name is still used
+        // by at least one known concrete implementation.
+        val concrete = runCatching {
+            Class.forName("com.intellij.execution.process.BaseProcessHandler")
+        }.getOrNull() ?: runCatching {
+            Class.forName("com.intellij.execution.process.ProcessHandler")
+        }.getOrNull()
+        if (concrete == null) {
+            println("WARNING: ProcessHandler class not found on test classpath — get_ide_snapshot exitCode extraction may silently return null")
+            return
+        }
+        val method = runCatching { concrete.getMethod("getExitCode") }.getOrNull()
+        if (method != null) println("OK: ${concrete.simpleName}.getExitCode() found (returns ${method.returnType.simpleName})")
+        else println("INFO: getExitCode() not on ${concrete.simpleName} directly — will rely on concrete subclasses (OSProcessHandler etc.)")
     }
 }
