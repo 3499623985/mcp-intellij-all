@@ -45,10 +45,12 @@ class McpCompanionBuildToolset : McpToolset {
         - tree: structured list of build nodes (tasks, errors, warnings) with file and line number when available
         - console: the raw text output
         Useful to read compilation errors, warnings, and build results.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_build_output(): String {
+    suspend fun get_build_output(projectPath: String? = null): String {
         disabledMessage("get_build_output")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         val tabs = runOnEdt { extractBuildTabs(project) }
         return Json.encodeToString(BuildOutput(tabs))
     }
@@ -176,10 +178,12 @@ class McpCompanionBuildToolset : McpToolset {
         - output: raw text from the Output tab (SQL executed, logs, etc.)
         - results: list of result grids, each with a name and tabular data (column headers + rows)
         Covers database sessions, run configurations, Spring Boot apps, etc.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_services_output(): String {
+    suspend fun get_services_output(projectPath: String? = null): String {
         disabledMessage("get_services_output")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return runOnEdt {
             val toolWindow = ToolWindowManager.getInstance(project).getToolWindow("Services")
                 ?: return@runOnEdt Json.encodeToString(
@@ -391,10 +395,12 @@ class McpCompanionBuildToolset : McpToolset {
         - active: true on the tab that is currently selected within its window
         - Run tabs also include a structured error/warning tree when available
         Use this whenever the user ran or debugged something and you need to see the output.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_console_output(): String {
+    suspend fun get_console_output(projectPath: String? = null): String {
         disabledMessage("get_console_output")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return runOnEdt { Json.encodeToString(extractConsoleOutput(project)) }
     }
 
@@ -459,10 +465,12 @@ class McpCompanionBuildToolset : McpToolset {
         - duration: execution time in milliseconds (if available)
         - errorMessage: failure message and stack trace if the test failed
         Useful to check which tests passed or failed and why.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_test_results(): String {
+    suspend fun get_test_results(projectPath: String? = null): String {
         disabledMessage("get_test_results")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         val output = runOnEdt { extractTestResults(project) }
         return Json.encodeToString(output)
     }
@@ -511,10 +519,12 @@ class McpCompanionBuildToolset : McpToolset {
         - active: true on the currently selected tab
         - output: visible terminal content (screen buffer + recent history)
         Use this to read command output, script results, or any text typed in the terminal.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_terminal_output(): String {
+    suspend fun get_terminal_output(projectPath: String? = null): String {
         disabledMessage("get_terminal_output")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return runOnEdt { extractTerminalTabs(project) }
     }
 
@@ -542,10 +552,12 @@ class McpCompanionBuildToolset : McpToolset {
         - command: the shell command to run (e.g. "ls -la", "gradle test")
         - tab: optional tab name to target; defaults to the currently active tab
         Use get_terminal_output afterwards to read the result.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun send_to_terminal(command: String, tab: String? = null): String {
+    suspend fun send_to_terminal(command: String, tab: String? = null, projectPath: String? = null): String {
         disabledMessage("send_to_terminal")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return runOnEdt { sendToTerminalImpl(project, command, tab) }
     }
 

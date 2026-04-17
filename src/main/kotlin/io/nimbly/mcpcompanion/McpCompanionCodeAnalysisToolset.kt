@@ -55,10 +55,12 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
         filePath: path relative to project root (default: all open editors)
         severity: minimum severity — "error" (default), "warning", "all"
         Each problem includes: file, line, column, severity, message, fixes.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_file_problems(filePath: String? = null, severity: String = "error"): String {
+    suspend fun get_file_problems(filePath: String? = null, severity: String = "error", projectPath: String? = null): String {
         disabledMessage("get_file_problems")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
 
         val minSeverity = when (severity.lowercase()) {
             "warning", "warn" -> HighlightSeverity.WARNING
@@ -140,10 +142,12 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
         line: 1-based line number to restrict to a specific line; 0 (default) = whole file
         column: 1-based column, used only together with line > 0 (default: 1)
         Results are grouped by line: {"line": 5, "message": "...", "fixes": ["Fix A", "Fix B"]}
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_quick_fixes(filePath: String, line: Int = 0, column: Int = 1): String {
+    suspend fun get_quick_fixes(filePath: String, line: Int = 0, column: Int = 1, projectPath: String? = null): String {
         disabledMessage("get_quick_fixes")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
 
         val vFile = runOnEdt { resolveFilePath(project, filePath) }
             ?: return "File not found: $filePath\nTried relative to: ${project.basePath}"
@@ -247,10 +251,12 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
         line: restrict search to a specific 1-based line (0 or omitted = whole file, recommended)
         If multiple fixes match the text, the first one is applied.
         Returns a confirmation message or an error if the fix was not found.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun apply_quick_fix(filePath: String, fixText: String, line: Int = 0): String {
+    suspend fun apply_quick_fix(filePath: String, fixText: String, line: Int = 0, projectPath: String? = null): String {
         disabledMessage("apply_quick_fix")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
 
         val vFile = runOnEdt { resolveFilePath(project, filePath) }
             ?: return "File not found: $filePath\nTried relative to: ${project.basePath}"
@@ -418,10 +424,12 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
         path: file or folder path relative to project root (omit for all inspections)
         enabled: "true" (default) = only enabled inspections, "false" = only disabled, "all" = both
         Returns: id, displayName, category, severity, enabled for each inspection.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun list_inspections(path: String? = null, enabled: String = "true"): String {
+    suspend fun list_inspections(path: String? = null, enabled: String = "true", projectPath: String? = null): String {
         disabledMessage("list_inspections")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
 
         val psiFiles: List<com.intellij.psi.PsiFile> = runReadAction {
             if (path != null) {
@@ -488,10 +496,12 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
                      Use list_inspections to discover IDs.
         severity: minimum severity to include — "error", "warning" (default), "all"
         Returns problems grouped by file: file, line, severity, inspection, message, fixes.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun run_inspections(path: String? = null, inspections: String? = null, severity: String = "warning"): String {
+    suspend fun run_inspections(path: String? = null, inspections: String? = null, severity: String = "warning", projectPath: String? = null): String {
         disabledMessage("run_inspections")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
 
         val minSeverity = when (severity.lowercase()) {
             "error"       -> com.intellij.lang.annotation.HighlightSeverity.ERROR
@@ -649,10 +659,12 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
         Automatically detects Gradle or Maven from the project root and triggers the appropriate sync action.
         Use this after modifying build.gradle, pom.xml, settings.gradle, or when dependencies are out of sync.
         Returns what was triggered, or an error if no build system is detected.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun refresh_project(): String {
+    suspend fun refresh_project(projectPath: String? = null): String {
         disabledMessage("refresh_project")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         val basePath = project.basePath ?: return "Cannot determine project base path"
         val am = ActionManager.getInstance()
 
@@ -702,10 +714,12 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
         navigating or editing files.
         Source root types: source, test, resource, testResource.
         All paths are relative to the project root.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_project_structure(): String {
+    suspend fun get_project_structure(projectPath: String? = null): String {
         disabledMessage("get_project_structure")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return runReadAction {
             val basePath = project.basePath ?: ""
             val sdk = ProjectRootManager.getInstance(project).projectSdk?.let { sdk ->

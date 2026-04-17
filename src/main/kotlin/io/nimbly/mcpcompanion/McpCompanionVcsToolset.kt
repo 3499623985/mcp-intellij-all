@@ -42,10 +42,11 @@ class McpCompanionVcsToolset : McpToolset {
 
         Parameters:
         - includeDiff: if true, include a unified diff for each changed file (default: false)
+        - projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_vcs_changes(includeDiff: Boolean = false): String {
+    suspend fun get_vcs_changes(includeDiff: Boolean = false, projectPath: String? = null): String {
         disabledMessage("get_vcs_changes")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return withContext(Dispatchers.IO) {
             try {
                 val clm = ChangeListManager.getInstance(project)
@@ -90,10 +91,12 @@ class McpCompanionVcsToolset : McpToolset {
     @McpDescription(description = """
         Returns the current branch and all local/remote branches for each Git repository in the project.
         Requires the Git plugin (bundled in all IntelliJ IDEA editions).
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_vcs_branch(): String {
+    suspend fun get_vcs_branch(projectPath: String? = null): String {
         disabledMessage("get_vcs_branch")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return withContext(Dispatchers.IO) {
             try {
                 val cl = git4ideaLoader() ?: return@withContext "Git plugin (Git4Idea) not available."
@@ -157,10 +160,11 @@ class McpCompanionVcsToolset : McpToolset {
         - maxCount: maximum number of commits to return per repository (default: 20)
         - file: optional file path (relative to project root) — restricts log to commits touching that file
         - branch: optional branch name to read the log from (default: current branch)
+        - projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_vcs_log(maxCount: Int = 20, file: String = "", branch: String = ""): String {
+    suspend fun get_vcs_log(maxCount: Int = 20, file: String = "", branch: String = "", projectPath: String? = null): String {
         disabledMessage("get_vcs_log")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return withContext(Dispatchers.IO) {
             try {
                 val cl = git4ideaLoader() ?: return@withContext "Git plugin (Git4Idea) not available."
@@ -251,10 +255,11 @@ class McpCompanionVcsToolset : McpToolset {
         - filePath: path to the file (relative to project root, or absolute)
         - startLine: first line to annotate, 1-based (default: 1)
         - endLine: last line to annotate, 1-based (default: all lines)
+        - projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_vcs_blame(filePath: String, startLine: Int = 1, endLine: Int = Int.MAX_VALUE): String {
+    suspend fun get_vcs_blame(filePath: String, startLine: Int = 1, endLine: Int = Int.MAX_VALUE, projectPath: String? = null): String {
         disabledMessage("get_vcs_blame")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return withContext(Dispatchers.IO) {
             try {
                 val absPath = if (filePath.startsWith("/")) filePath else "${project.basePath}/$filePath"
@@ -318,14 +323,16 @@ class McpCompanionVcsToolset : McpToolset {
         - path: file or directory path (relative to project root, or absolute); omit for project-wide events
         - maxRevisions: max number of revisions to return (default: 20)
         - withDiff: if true, include changes between each revision and its predecessor (default: false)
+        - projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
     suspend fun get_local_history(
         path: String = "",
         maxRevisions: Int = 20,
-        withDiff: Boolean = false
+        withDiff: Boolean = false,
+        projectPath: String? = null
     ): String {
         disabledMessage("get_local_history")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return withContext(Dispatchers.IO) {
             try {
                 val lhClass   = Class.forName("com.intellij.history.LocalHistory")

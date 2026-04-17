@@ -175,10 +175,11 @@ IMPORTANT: Always prefer IntelliJ tools over native Write/Edit/Bash(rm) for any 
         - pathInProject: relative path from the project root (e.g. "src/Main.java")
         - oldText: exact text to find and replace (first occurrence)
         - newText: replacement text
+        - projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun replace_text_undoable(pathInProject: String, oldText: String, newText: String): String {
+    suspend fun replace_text_undoable(pathInProject: String, oldText: String, newText: String, projectPath: String? = null): String {
         disabledMessage("replace_text_undoable")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         val (virtualFile, err) = resolveFilePathOrError(project, pathInProject)
         if (err != null) return "error: $err"
         val document = runOnEdt {
@@ -204,10 +205,12 @@ IMPORTANT: Always prefer IntelliJ tools over native Write/Edit/Bash(rm) for any 
         - search: find action IDs and names matching a keyword (returns up to 30 matches)
         Tip: use search first to discover the right action ID, then call with actionId to trigger it.
         Common IDs: GotoFile, ReformatCode, OptimizeImports, GotoClass, FindUsages, Vcs.UpdateProject, Git.Branches
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun execute_ide_action(actionId: String? = null, configurable: String? = null, search: String? = null): String {
+    suspend fun execute_ide_action(actionId: String? = null, configurable: String? = null, search: String? = null, projectPath: String? = null): String {
         disabledMessage("execute_ide_action")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         val am = com.intellij.openapi.actionSystem.ActionManager.getInstance()
         return when {
             configurable != null -> {
@@ -293,10 +296,12 @@ IMPORTANT: Always prefer IntelliJ tools over native Write/Edit/Bash(rm) for any 
         Deletes a file or an empty directory via the IntelliJ VFS so the IDE is immediately notified.
         Prefer this over shell rm commands when working on a project open in IntelliJ.
         filePath: path relative to the project root.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun delete_file(filePath: String): String {
+    suspend fun delete_file(filePath: String, projectPath: String? = null): String {
         disabledMessage("delete_file")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return runOnEdt {
             val (vFile, err) = resolveFilePathOrError(project, filePath)
             if (err != null) return@runOnEdt err

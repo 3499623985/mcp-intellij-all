@@ -509,16 +509,23 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
             What the hook should do:
             - Call the MCP tool `get_ide_snapshot` on IntelliJ's MCP server via its SSE endpoint
               (JSON-RPC method `tools/call`, no arguments).
-            - Print the JSON result wrapped in <ide_context>...</ide_context> so it gets injected
-              into my next prompt.
+            - The response has shape `{"projects":[{...}, ...]}` — a single IntelliJ JVM can host
+              several open projects, so the hook must pick the one whose `projectPath` matches
+              Claude Code's current working directory (`${'$'}PWD`, or `${'$'}CLAUDE_PROJECT_DIR`
+              if available). Match rule: `${'$'}PWD` equals `projectPath` OR starts with
+              `projectPath + "/"`. If no project matches, skip injection (exit 0 silently).
+            - Print the matched project's snapshot wrapped in <ide_context>...</ide_context>
+              so it gets injected into my next prompt.
             - If no IntelliJ instance responds within 3 seconds total, exit 0 silently — the hook
               must never slow my prompts down.
 
             Port discovery:
             - The default MCP Server port is 64342, but users can change it in IntelliJ settings,
               and multiple IDEs can run side-by-side on consecutive ports. Have the script probe
-              127.0.0.1 on ports 64342, 64343, 64344, 64345 and use the first one that returns a
-              valid SSE sessionId. Allow override via an `INTELLIJ_MCP_PORT` env var.
+              127.0.0.1 on ports 64342, 64343, 64344, 64345. On each responsive port, call
+              `get_ide_snapshot` and check if any of the returned `projects[].projectPath` matches
+              `${'$'}PWD`; use the first port that contains a matching project. Allow override of
+              the probe list via an `INTELLIJ_MCP_PORT` env var.
 
             What you should do:
             1. Create the hook at ~/.claude/hooks/intellij-ide-context.sh and chmod +x it.
@@ -527,8 +534,9 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
                and read the response from the same SSE stream.
             2. Register it in ~/.claude/settings.json under hooks.UserPromptSubmit —
                MERGE with any existing hooks, do not overwrite.
-            3. Run the script once (with IntelliJ open) to verify its output, and show me the
-               <ide_context>...</ide_context> payload.
+            3. Run the script once (with IntelliJ open on this project) to verify its output, and
+               show me the <ide_context>...</ide_context> payload — it must be the snapshot for
+               THIS project, not another one.
         """.trimIndent()
 
         fun isMcpServerEnabled(): Boolean = try {

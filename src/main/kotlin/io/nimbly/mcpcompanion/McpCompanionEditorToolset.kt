@@ -39,10 +39,12 @@ class McpCompanionEditorToolset : McpToolset {
         For the file that last had focus (active editor), also returns:
         - currentLine: 1-based line number of the caret
         - selection: if a selection exists, its text and start/end line numbers (1-based)
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_open_editors(): String {
+    suspend fun get_open_editors(projectPath: String? = null): String {
         disabledMessage("get_open_editors")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         val state = runReadAction { buildEditorState(project) }
         return Json.encodeToString(state)
     }
@@ -77,10 +79,12 @@ class McpCompanionEditorToolset : McpToolset {
         filePath: path relative to the project root.
         line: 1-based line number.
         column: 1-based column number (default: 1).
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun navigate_to(filePath: String, line: Int, column: Int = 1): String {
+    suspend fun navigate_to(filePath: String, line: Int, column: Int = 1, projectPath: String? = null): String {
         disabledMessage("navigate_to")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return runOnEdt {
             val (vFile, err) = resolveFilePathOrError(project, filePath)
             if (err != null) return@runOnEdt err
@@ -100,10 +104,12 @@ class McpCompanionEditorToolset : McpToolset {
         startLine/startColumn: 1-based position of the first character to select.
         endLine/endColumn: 1-based position of the LAST character to select (inclusive).
         Example: to select "Hello" on line 3 starting at column 5, use startColumn=5, endColumn=9.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun select_text(filePath: String, startLine: Int, startColumn: Int, endLine: Int, endColumn: Int): String {
+    suspend fun select_text(filePath: String, startLine: Int, startColumn: Int, endLine: Int, endColumn: Int, projectPath: String? = null): String {
         disabledMessage("select_text")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return runOnEdt {
             val (vFile, err) = resolveFilePathOrError(project, filePath)
             if (err != null) return@runOnEdt err
@@ -136,10 +142,12 @@ class McpCompanionEditorToolset : McpToolset {
                 Example: to highlight "Random" at line 17 columns 34-49, use "17:34:17:49".
                 Use get_file_text_by_path to read the file and identify exact column positions.
         Call clear_highlights to remove them.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun highlight_text(filePath: String, ranges: String): String {
+    suspend fun highlight_text(filePath: String, ranges: String, projectPath: String? = null): String {
         disabledMessage("highlight_text")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return runOnEdt {
             val (vFile, err) = resolveFilePathOrError(project, filePath)
             if (err != null) return@runOnEdt err
@@ -196,10 +204,12 @@ class McpCompanionEditorToolset : McpToolset {
     @McpDescription(description = """
         Removes all highlights previously added by highlight_text from all open editors.
         filePath: path relative to the project root. Leave empty to clear all open files.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun clear_highlights(filePath: String = ""): String {
+    suspend fun clear_highlights(filePath: String = "", projectPath: String? = null): String {
         disabledMessage("clear_highlights")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return runOnEdt {
             var count = 0
             val editors = if (filePath.isEmpty()) {

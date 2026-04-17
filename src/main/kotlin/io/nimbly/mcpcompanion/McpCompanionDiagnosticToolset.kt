@@ -41,10 +41,12 @@ class McpCompanionDiagnosticToolset : McpToolset {
           combine with depth to limit how many dot-separated segments are returned beyond the prefix
           (e.g. prefix="gradle", depth=1 → only "gradle.xxx" keys, not "gradle.xxx.yyy")
         Results are returned as a flat JSON map of key → value.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_ide_settings(search: String? = null, key: String? = null, prefix: String? = null, depth: Int? = null): String {
+    suspend fun get_ide_settings(search: String? = null, key: String? = null, prefix: String? = null, depth: Int? = null, projectPath: String? = null): String {
         disabledMessage("get_ide_settings")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return runOnEdt {
             val known = knownIdeSettings(project)
             val results = linkedMapOf<String, String?>()
@@ -163,7 +165,11 @@ class McpCompanionDiagnosticToolset : McpToolset {
     @McpTool(name = "get_running_processes")
     @McpDescription(description = """
         Returns IntelliJ background-task activity — the same tasks visible in the status bar
-        (indexing, Gradle sync, compilation, inspections, etc.) — as two lists:
+        (indexing, Gradle sync, compilation, inspections, etc.) — for every project open in
+        this IDE. A single JVM can host several project windows, so the response is keyed
+        by project.
+
+        { "projects": [ { projectPath, projectName, running, recentlyFinished }, ... ] }
 
         - running: tasks currently in progress
           * title: main label of the task
@@ -176,15 +182,23 @@ class McpCompanionDiagnosticToolset : McpToolset {
           * title, ranMs (how long it ran), endedAgoMs (how long ago it ended)
 
         Call this when IntelliJ seems busy, slow, or stuck to understand what it is doing,
-        or right after an event to see what just completed.
+        or right after an event to see what just completed. Useful for CPU diagnostics
+        across multiple projects at once.
     """)
     suspend fun get_running_processes(): String {
         disabledMessage("get_running_processes")?.let { return it }
-        val project = coroutineContext.project
-        val running = collectRunningProcesses(project)
-        val finished = collectRecentlyFinished(project)
-        if (running.isEmpty() && finished.isEmpty()) return "No background processes running"
-        return Json.encodeToString(RunningProcessesResult(running = running, recentlyFinished = finished))
+        val projects = com.intellij.openapi.project.ProjectManager.getInstance().openProjects
+        val entries = projects.map { p ->
+            ProjectProcessesSnapshot(
+                projectPath = p.basePath ?: "",
+                projectName = p.name,
+                running = collectRunningProcesses(p),
+                recentlyFinished = collectRecentlyFinished(p)
+            )
+        }
+        if (entries.all { it.running.isEmpty() && it.recentlyFinished.isEmpty() })
+            return "No background processes running"
+        return Json.encodeToString(RunningProcessesResult(projects = entries))
     }
 
     /** Snapshots the tracker's recently-finished queue for inclusion in diagnostic tools. */
@@ -236,10 +250,12 @@ class McpCompanionDiagnosticToolset : McpToolset {
           - "pause"  — suspend the process temporarily
           - "resume" — resume a paused process
         Returns a confirmation message or an error if the process is not found / action not supported.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun manage_process(title: String, action: String): String {
+    suspend fun manage_process(title: String, action: String, projectPath: String? = null): String {
         disabledMessage("manage_process")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         val tracker = ProcessTracker.getInstance(project)
         val active = tracker.findActiveByTitle(title)
         val match: ProgressIndicator? = active?.indicator
@@ -305,10 +321,18 @@ class McpCompanionDiagnosticToolset : McpToolset {
         Designed for frequent polling (e.g. a Claude Code UserPromptSubmit hook)
         so the AI assistant always knows the current context without being told.
 
-        Returns a compact JSON payload with:
-        - activeFile: path + line of the focused editor (e.g. "/path/File.java:42")
+        Returns a compact JSON payload with ONE entry per open project in the IDE —
+        a single JVM can host several project windows, so the hook/AI must pick the
+        project whose projectPath matches its current working directory.
+
+        { "projects": [ ProjectSnapshot, ... ] }
+
+        Each ProjectSnapshot contains:
+        - projectPath: absolute path of the project root (used to match against Claude Code's CWD)
+        - projectName: the project display name
+        - activeFile: path + line of the focused editor in this project (e.g. "/path/File.java:42")
         - selection: currently selected text (truncated to 100 chars) if any
-        - openFiles: list of open file paths (first 10)
+        - openFiles: list of open file paths in this project (first 10)
         - activeFileProblems: count of errors and warnings in the active editor (from IDE analysis)
         - build: last build summary — total ERROR and WARNING nodes in the Build tool window
         - runs: all run/debug tabs currently open, each with:
@@ -316,7 +340,7 @@ class McpCompanionDiagnosticToolset : McpToolset {
             * status: "running", "paused" (debug only), "finishedOk", "finishedError", or "finished"
             * exitCode for finished runs (if available)
             * pausedAt: "file:line" of the top stack frame when the debugger is paused
-        - indexing: true if the IDE is currently indexing
+        - indexing: true if this project is currently indexing
         - backgroundProcesses: in-progress tasks from the status bar (Gradle sync, indexing, etc.),
           each with title, startedAgoMs, and progress (0..1 if determinate, null if indeterminate)
         - recentlyFinished: up to 10 tasks that finished in the last 3 minutes (title, ranMs, endedAgoMs)
@@ -325,58 +349,65 @@ class McpCompanionDiagnosticToolset : McpToolset {
     """)
     suspend fun get_ide_snapshot(): String {
         disabledMessage("get_ide_snapshot")?.let { return it }
-        val project = coroutineContext.project
 
         val snapshot = runOnEdt {
-            val fem = com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project)
-            val openPaths = fem.openFiles.map { it.path }
-            val editor = fem.selectedTextEditor
-            val selectedFilePath = fem.selectedFiles.firstOrNull()?.path
-
-            var activeFile: String? = null
-            var selection: String? = null
-            var activeFileProblems: SnapshotProblems? = null
-            if (editor != null && selectedFilePath != null) {
-                val line = editor.caretModel.logicalPosition.line + 1
-                activeFile = "$selectedFilePath:$line"
-                if (editor.selectionModel.hasSelection()) {
-                    val text = editor.selectionModel.selectedText
-                    if (!text.isNullOrEmpty()) {
-                        selection = if (text.length > 100) text.take(100) + "…" else text
-                    }
-                }
-                activeFileProblems = countEditorProblems(editor.document, project)
-            }
-
-            val runs = collectRunsSnapshot(project)
-            val indexing = DumbService.getInstance(project).isDumb
-            val build = countBuildProblems(project)
-
-            val now = System.currentTimeMillis()
-            val tracker = ProcessTracker.getInstance(project)
-            val bg = tracker.active().map { task ->
-                val ind = task.indicator
-                val progress = runCatching {
-                    if (ind.isIndeterminate) null else ind.fraction.takeIf { it in 0.0..1.0 }
-                }.getOrNull()
-                SnapshotProcess(title = task.title, startedAgoMs = now - task.startedAt, progress = progress)
-            }
-            val finished = collectRecentlyFinished(project)
-
-            IdeSnapshot(
-                activeFile = activeFile,
-                selection = selection,
-                openFileCount = openPaths.size,
-                openFiles = openPaths.take(10),
-                activeFileProblems = activeFileProblems,
-                build = build,
-                runs = runs,
-                indexing = indexing,
-                backgroundProcesses = bg,
-                recentlyFinished = finished
-            )
+            val projects = com.intellij.openapi.project.ProjectManager.getInstance().openProjects
+            IdeSnapshot(projects = projects.map { buildProjectSnapshot(it) })
         }
         return Json.encodeToString(snapshot)
+    }
+
+    /** Builds the per-project section of a snapshot. Must be called on the EDT. */
+    private fun buildProjectSnapshot(project: com.intellij.openapi.project.Project): ProjectSnapshot {
+        val fem = com.intellij.openapi.fileEditor.FileEditorManager.getInstance(project)
+        val openPaths = fem.openFiles.map { it.path }
+        val editor = fem.selectedTextEditor
+        val selectedFilePath = fem.selectedFiles.firstOrNull()?.path
+
+        var activeFile: String? = null
+        var selection: String? = null
+        var activeFileProblems: SnapshotProblems? = null
+        if (editor != null && selectedFilePath != null) {
+            val line = editor.caretModel.logicalPosition.line + 1
+            activeFile = "$selectedFilePath:$line"
+            if (editor.selectionModel.hasSelection()) {
+                val text = editor.selectionModel.selectedText
+                if (!text.isNullOrEmpty()) {
+                    selection = if (text.length > 100) text.take(100) + "…" else text
+                }
+            }
+            activeFileProblems = countEditorProblems(editor.document, project)
+        }
+
+        val runs = collectRunsSnapshot(project)
+        val indexing = DumbService.getInstance(project).isDumb
+        val build = countBuildProblems(project)
+
+        val now = System.currentTimeMillis()
+        val tracker = ProcessTracker.getInstance(project)
+        val bg = tracker.active().map { task ->
+            val ind = task.indicator
+            val progress = runCatching {
+                if (ind.isIndeterminate) null else ind.fraction.takeIf { it in 0.0..1.0 }
+            }.getOrNull()
+            SnapshotProcess(title = task.title, startedAgoMs = now - task.startedAt, progress = progress)
+        }
+        val finished = collectRecentlyFinished(project)
+
+        return ProjectSnapshot(
+            projectPath = project.basePath ?: "",
+            projectName = project.name,
+            activeFile = activeFile,
+            selection = selection,
+            openFileCount = openPaths.size,
+            openFiles = openPaths.take(10),
+            activeFileProblems = activeFileProblems,
+            build = build,
+            runs = runs,
+            indexing = indexing,
+            backgroundProcesses = bg,
+            recentlyFinished = finished
+        )
     }
 
     /** Collects all open run/debug tabs with their current status (running, paused, finished ok/error). */
@@ -489,48 +520,58 @@ class McpCompanionDiagnosticToolset : McpToolset {
 
     @McpTool(name = "get_intellij_diagnostic")
     @McpDescription(description = """
-        Returns IntelliJ diagnostic information in one call. Use this as a first step when
-        something is not working as expected in IntelliJ.
-        Returns:
-        - indexing: whether the IDE is currently indexing files (DumbService)
+        Returns IntelliJ diagnostic information in one call — for every project open in this
+        IDE. Use this as a first step when something is not working as expected.
+
+        { "projects": [ { projectPath, projectName, indexing, notifications, processes,
+                          recentlyFinished }, ... ],
+          "logEntries": [...] }
+
+        Per project:
+        - indexing: whether that project is currently indexing files (DumbService)
         - notifications: active notifications visible in the Event Log (errors, warnings)
-        - processes: background processes currently running or paused (same as get_running_processes)
+        - processes: background processes currently running or paused
         - recentlyFinished: up to 10 tasks that finished in the last 3 minutes
+
+        Global:
         - logEntries: log entries from idea.log in the last N minutes, including stack traces
+          (idea.log is shared across all projects in this IDE)
+
         minutesBack: how many minutes back to scan idea.log (default: 5)
         level: minimum log level to include — "error" (ERROR+SEVERE only), "warn" (adds WARN), "info" (adds INFO). Default: "error"
     """)
     suspend fun get_intellij_diagnostic(minutesBack: Int = 5, level: String = "error"): String {
         disabledMessage("get_intellij_diagnostic")?.let { return it }
-        val project = coroutineContext.project
 
-        val indexing = runOnEdt {
-            IndexingStatus(active = DumbService.getInstance(project).isDumb)
+        val projects = com.intellij.openapi.project.ProjectManager.getInstance().openProjects
+        val entries = runOnEdt {
+            projects.map { p ->
+                val indexing = IndexingStatus(active = DumbService.getInstance(p).isDumb)
+                val notifications = NotificationsManager.getNotificationsManager()
+                    .getNotificationsOfType(Notification::class.java, p)
+                    .map { n ->
+                        DiagnosticNotification(
+                            type = n.type.name,
+                            title = n.title,
+                            content = n.content.takeIf { it.isNotBlank() },
+                            groupId = n.groupId.takeIf { it.isNotBlank() }
+                        )
+                    }
+                ProjectDiagnostic(
+                    projectPath = p.basePath ?: "",
+                    projectName = p.name,
+                    indexing = indexing,
+                    notifications = notifications,
+                    processes = collectRunningProcesses(p),
+                    recentlyFinished = collectRecentlyFinished(p)
+                )
+            }
         }
-
-        val notifications = runOnEdt {
-            NotificationsManager.getNotificationsManager()
-                .getNotificationsOfType(Notification::class.java, project)
-                .map { n ->
-                    DiagnosticNotification(
-                        type = n.type.name,
-                        title = n.title,
-                        content = n.content.takeIf { it.isNotBlank() },
-                        groupId = n.groupId.takeIf { it.isNotBlank() }
-                    )
-                }.toList()
-        }
-
-        val processes = collectRunningProcesses(project)
-        val recentlyFinished = collectRecentlyFinished(project)
 
         val logEntries = readIdeaLogErrors(minutesBack = minutesBack, level = level)
 
         return Json.encodeToString(IntellijDiagnostic(
-            indexing = indexing,
-            notifications = notifications,
-            processes = processes,
-            recentlyFinished = recentlyFinished,
+            projects = entries,
             logEntries = logEntries
         ))
     }
@@ -581,9 +622,18 @@ class McpCompanionDiagnosticToolset : McpToolset {
 // ── Data classes ──────────────────────────────────────────────────────────────
 
 @Serializable data class RunningProcess(val title: String, val details: String? = null, val progress: Double? = null, val cancellable: Boolean? = null, val paused: Boolean = false)
-@Serializable data class RunningProcessesResult(val running: List<RunningProcess>, val recentlyFinished: List<SnapshotFinishedProcess> = emptyList())
+@Serializable data class ProjectProcessesSnapshot(
+    val projectPath: String,
+    val projectName: String,
+    val running: List<RunningProcess>,
+    val recentlyFinished: List<SnapshotFinishedProcess> = emptyList()
+)
+@Serializable data class RunningProcessesResult(val projects: List<ProjectProcessesSnapshot>)
 
-@Serializable data class IdeSnapshot(
+@Serializable data class IdeSnapshot(val projects: List<ProjectSnapshot>)
+@Serializable data class ProjectSnapshot(
+    val projectPath: String,
+    val projectName: String,
     val activeFile: String? = null,
     val selection: String? = null,
     val openFileCount: Int,
@@ -601,6 +651,14 @@ class McpCompanionDiagnosticToolset : McpToolset {
 @Serializable data class SnapshotProcess(val title: String, val startedAgoMs: Long, val progress: Double? = null)
 @Serializable data class SnapshotFinishedProcess(val title: String, val ranMs: Long, val endedAgoMs: Long)
 
-@Serializable data class IntellijDiagnostic(val indexing: IndexingStatus, val notifications: List<DiagnosticNotification>, val processes: List<RunningProcess>, val recentlyFinished: List<SnapshotFinishedProcess> = emptyList(), val logEntries: List<String>)
+@Serializable data class ProjectDiagnostic(
+    val projectPath: String,
+    val projectName: String,
+    val indexing: IndexingStatus,
+    val notifications: List<DiagnosticNotification>,
+    val processes: List<RunningProcess>,
+    val recentlyFinished: List<SnapshotFinishedProcess> = emptyList()
+)
+@Serializable data class IntellijDiagnostic(val projects: List<ProjectDiagnostic>, val logEntries: List<String>)
 @Serializable data class IndexingStatus(val active: Boolean)
 @Serializable data class DiagnosticNotification(val type: String, val title: String, val content: String? = null, val groupId: String? = null)

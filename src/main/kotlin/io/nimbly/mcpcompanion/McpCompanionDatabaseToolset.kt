@@ -36,10 +36,12 @@ class McpCompanionDatabaseToolset : McpToolset {
         Returns name, URL, and driver for each data source.
         Requires the Database Tools plugin (IntelliJ IDEA Ultimate).
         Call this first to discover the data source name to pass to execute_database_query.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun list_database_sources(): String {
+    suspend fun list_database_sources(projectPath: String? = null): String {
         disabledMessage("list_database_sources")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return withContext(Dispatchers.IO) {
             try {
                 val sources = getDataSources(project)
@@ -68,10 +70,11 @@ class McpCompanionDatabaseToolset : McpToolset {
         Parameters:
         - dataSource: data source name from list_database_sources (auto-selected if only one exists)
         - includeColumns: include column details for each table (default: false)
+        - projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_database_schema(dataSource: String = "", includeColumns: Boolean = false): String {
+    suspend fun get_database_schema(dataSource: String = "", includeColumns: Boolean = false, projectPath: String? = null): String {
         disabledMessage("get_database_schema")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return withContext(Dispatchers.IO) {
             try {
                 val sources = getDataSources(project)
@@ -115,12 +118,13 @@ class McpCompanionDatabaseToolset : McpToolset {
         - dataSource: data source name from list_database_sources. If omitted and only one source is
           configured, it is used automatically.
         - maxRows: maximum number of result rows to return (default: 100)
+        - projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
 
         Returns JSON with columns and rows for SELECT queries, or the number of affected rows for DML.
     """)
-    suspend fun execute_database_query(query: String, dataSource: String = "", maxRows: Int = 100): String {
+    suspend fun execute_database_query(query: String, dataSource: String = "", maxRows: Int = 100, projectPath: String? = null): String {
         disabledMessage("execute_database_query")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return withContext(Dispatchers.IO) {
             try {
                 // 1. Resolve the requested data source

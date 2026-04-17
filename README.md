@@ -47,9 +47,9 @@ An IntelliJ IDEA plugin that extends the built-in [JetBrains MCP Server](https:/
 ### Diagnostic & Processes
 | Tool | Description |
 |------|-------------|
-| `get_ide_snapshot` | Lightweight snapshot (active file, selection, runs, debug, indexing, background tasks + recently-finished ones) — designed for frequent polling by a Claude Code hook |
-| `get_intellij_diagnostic` 🔬 | One-call diagnostic: indexing status, notifications, running processes, recently-finished tasks, and idea.log WARN/ERROR tail |
-| `get_running_processes` | Lists active background processes + tasks finished in the last 3 minutes (Gradle sync, indexing, compilation, etc.) |
+| `get_ide_snapshot` | Lightweight snapshot (active file, selection, runs, debug, indexing, background tasks + recently-finished ones) — designed for frequent polling by a Claude Code hook. Multi-project: returns one entry per open project |
+| `get_intellij_diagnostic` 🔬 | One-call diagnostic (per project: indexing status, notifications, running processes, recently-finished tasks) + IDE-wide idea.log WARN/ERROR tail |
+| `get_running_processes` | Lists active background processes + tasks finished in the last 3 minutes (Gradle sync, indexing, compilation, etc.) — multi-project |
 | `manage_process` | Pauses, resumes, or cancels a background process by title |
 | `get_ide_settings` | Read IntelliJ settings: Gradle, SDK, compiler, encoding — search by keyword, direct key lookup, or prefix subtree with optional depth |
 
@@ -89,6 +89,12 @@ An IntelliJ IDEA plugin that extends the built-in [JetBrains MCP Server](https:/
 | `delete_file` 🔒 | Deletes a file from the project (undoable) |
 
 > 🔬 Core logic covered by headless tests. ⚠️ No automated test coverage. 🔒 Disabled by default — enable in Settings → Tools → MCP Server Companion.
+
+### Multi-project support
+
+All tools that target a single project accept an optional `projectPath` parameter (absolute path of the project root). This is useful when you have several IntelliJ windows open in the same JVM and want to target a specific one. When omitted, the currently-focused project is used.
+
+`get_ide_snapshot`, `get_running_processes`, and `get_intellij_diagnostic` are **multi-project**: they return one entry per open project, so callers (like the Claude Code hook) can pick the right one based on their current working directory.
 
 ## Settings
 

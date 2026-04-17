@@ -51,10 +51,12 @@ class McpCompanionDebugToolset : McpToolset {
         Returns the local variables and their values from the current debugger stack frame.
         Only available when a debug session is paused at a breakpoint.
         Useful to inspect variable state during debugging.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_debug_variables(): String {
+    suspend fun get_debug_variables(projectPath: String? = null): String {
         disabledMessage("get_debug_variables")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         val sessions = XDebuggerManager.getInstance(project).debugSessions
         if (sessions.isEmpty()) return "No active debug session"
         val session = sessions.first()
@@ -93,10 +95,12 @@ class McpCompanionDebugToolset : McpToolset {
         line: 1-based line number.
         condition: condition expression (e.g. "i == 3"). Leave empty for unconditional.
         If a breakpoint already exists at that line, its condition is updated instead.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun add_conditional_breakpoint(filePath: String, line: Int, condition: String = ""): String {
+    suspend fun add_conditional_breakpoint(filePath: String, line: Int, condition: String = "", projectPath: String? = null): String {
         disabledMessage("add_conditional_breakpoint")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return runOnEdt {
             val (file, err) = resolveFilePathOrError(project, filePath)
             if (err != null) return@runOnEdt err
@@ -135,10 +139,12 @@ class McpCompanionDebugToolset : McpToolset {
     @McpDescription(description = """
         Returns all line breakpoints in the project with their file, line, enabled state, and condition (if any).
         Use this to inspect existing breakpoints before modifying them with set_breakpoint_condition.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_breakpoints(): String {
+    suspend fun get_breakpoints(projectPath: String? = null): String {
         disabledMessage("get_breakpoints")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         val breakpoints = runOnEdt {
             XDebuggerManager.getInstance(project).breakpointManager.allBreakpoints
                 .filterIsInstance<com.intellij.xdebugger.breakpoints.XLineBreakpoint<*>>()
@@ -163,10 +169,12 @@ class McpCompanionDebugToolset : McpToolset {
         Pass muted=true to disable all breakpoints (they become inactive but are not deleted).
         Pass muted=false to re-enable all breakpoints.
         Does not require an active debug session.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun mute_breakpoints(muted: Boolean): String {
+    suspend fun mute_breakpoints(muted: Boolean, projectPath: String? = null): String {
         disabledMessage("mute_breakpoints")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         val count = runOnEdt {
             val breakpoints = XDebuggerManager.getInstance(project).breakpointManager.allBreakpoints
                 .filterIsInstance<com.intellij.xdebugger.breakpoints.XLineBreakpoint<*>>()
@@ -185,10 +193,12 @@ class McpCompanionDebugToolset : McpToolset {
         line: 1-based line number where the breakpoint is set.
         condition: the condition expression (e.g. "i == 5"). Pass empty string to remove the condition.
         The breakpoint must already exist at that line.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun set_breakpoint_condition(filePath: String, line: Int, condition: String): String {
+    suspend fun set_breakpoint_condition(filePath: String, line: Int, condition: String, projectPath: String? = null): String {
         disabledMessage("set_breakpoint_condition")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
         return runOnEdt {
             val manager = XDebuggerManager.getInstance(project).breakpointManager
             val bp = manager.allBreakpoints
@@ -216,10 +226,12 @@ class McpCompanionDebugToolset : McpToolset {
         The XML uses the same format as .idea/runConfigurations/*.xml (IntelliJ storage format).
         Use this to inspect configuration details or as a template for create_run_configuration_from_xml.
         configurationName: exact name from list_run_configurations.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun get_run_configuration_xml(configurationName: String): String {
+    suspend fun get_run_configuration_xml(configurationName: String, projectPath: String? = null): String {
         disabledMessage("get_run_configuration_xml")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
 
         return runOnEdt {
             val settings = RunManager.getInstance(project).findConfigurationByName(configurationName)
@@ -247,10 +259,12 @@ class McpCompanionDebugToolset : McpToolset {
           3. Call this tool with the modified XML and a new name.
         name: name for the new configuration.
         xml: full XML string as returned by get_run_configuration_xml (must include type and factoryName attributes).
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun create_run_configuration_from_xml(name: String, xml: String): String {
+    suspend fun create_run_configuration_from_xml(name: String, xml: String, projectPath: String? = null): String {
         disabledMessage("create_run_configuration_from_xml")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
 
         return runOnEdt {
             val runManager = RunManager.getInstance(project)
@@ -304,10 +318,12 @@ class McpCompanionDebugToolset : McpToolset {
         Lists all run configurations defined in the project.
         Returns name, type, folder (if any), and running status for each configuration.
         Use the exact name with start_run_configuration or debug_run_configuration.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun list_run_configurations(): String {
+    suspend fun list_run_configurations(projectPath: String? = null): String {
         disabledMessage("list_run_configurations")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
 
         @Serializable
         data class RunConfigInfo(val name: String, val type: String, val folder: String? = null, val running: Boolean)
@@ -341,10 +357,12 @@ class McpCompanionDebugToolset : McpToolset {
         mode: "run" (default) or "debug".
         configurationName: exact name from list_run_configurations.
         Use get_console_output to read output after launch.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun start_run_configuration(configurationName: String, mode: String = "run"): String {
+    suspend fun start_run_configuration(configurationName: String, mode: String = "run", projectPath: String? = null): String {
         disabledMessage("start_run_configuration")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
 
         val settings = runOnEdt {
             RunManager.getInstance(project).findConfigurationByName(configurationName)
@@ -372,16 +390,19 @@ class McpCompanionDebugToolset : McpToolset {
         envVariables: environment variables as "KEY1=VALUE1,KEY2=VALUE2". Set to "" to clear.
         Only parameters explicitly provided are changed — omitted ones are left untouched.
         Works for Application, Gradle, Maven, JUnit, Kotlin and any config implementing CommonProgramRunConfigurationParameters.
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
     suspend fun modify_run_configuration(
         configurationName: String,
         vmOptions: String? = null,
         programArguments: String? = null,
         workingDirectory: String? = null,
-        envVariables: String? = null
+        envVariables: String? = null,
+        projectPath: String? = null
     ): String {
         disabledMessage("modify_run_configuration")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
 
         return runOnEdt {
             val runManager = RunManager.getInstance(project)
@@ -437,10 +458,12 @@ class McpCompanionDebugToolset : McpToolset {
         Does NOT wait for completion — use get_debug_variables to check if stopped at a breakpoint,
         or get_console_output to read console output.
         configurationName: exact name of the run configuration (use get_run_configurations to list them).
+
+        projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
-    suspend fun debug_run_configuration(configurationName: String): String {
+    suspend fun debug_run_configuration(configurationName: String, projectPath: String? = null): String {
         disabledMessage("debug_run_configuration")?.let { return it }
-        val project = coroutineContext.project
+        val project = resolveProject(projectPath)
 
         val settings = runOnEdt {
             com.intellij.execution.RunManager.getInstance(project).findConfigurationByName(configurationName)

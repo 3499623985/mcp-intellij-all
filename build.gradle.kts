@@ -13,7 +13,7 @@ val secrets = Properties().apply {
 }
 
 group = "io.nimbly"
-version = "2.11.1"
+version = "2.11.2"
 
 repositories {
     mavenCentral()
@@ -46,6 +46,7 @@ intellijPlatform {
         }
         changeNotes = """
             <ul>
+                <li><b>2.11.2</b> — Multi-project support: <code>get_ide_snapshot</code>, <code>get_running_processes</code> and <code>get_intellij_diagnostic</code> now return one entry per open project (a single JVM can host several project windows). All other project-scoped tools accept an optional <code>projectPath</code> parameter to target a specific project.</li>
                 <li><b>2.11.0</b> — New tool: <code>get_ide_snapshot</code> — compact snapshot of the current IDE context (active file + caret, selection, open files, runs, debug paused location, indexing, background tasks, recently-finished tasks) designed for frequent polling by a Claude Code <code>UserPromptSubmit</code> hook.</li>
                 <li><b>2.10.0</b> — Run configurations can now be listed, launched, created from XML, and modified directly from your AI client: <code>list_run_configurations</code>, <code>start_run_configuration</code>, <code>get_run_configuration_xml</code>, <code>create_run_configuration_from_xml</code>, <code>modify_run_configuration</code>.</li>
                 <li><b>2.9.0</b> — New tools: <code>list_inspections</code> (browse the active inspection profile) and <code>run_inspections</code> (run inspections on a file or project, with severity filter).</li>
