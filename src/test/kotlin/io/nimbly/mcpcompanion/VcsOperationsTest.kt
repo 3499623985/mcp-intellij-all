@@ -1,0 +1,415 @@
+package io.nimbly.mcpcompanion
+
+import com.intellij.openapi.vfs.LocalFileSystem
+import com.intellij.testFramework.fixtures.BasePlatformTestCase
+import java.io.File
+
+/**
+ * Real integration tests for the VCS tools (vcs_stage_files, vcs_commit, vcs_stash,
+ * vcs_push, vcs_pull) and the git read helpers (log, branch, status).
+ *
+ * Each test uses a real temporary Git repository on disk.
+ * git4idea classloader is loaded via the same reflection path as production code.
+ * When PluginManagerCore has not loaded Git4Idea (headless environment), we fall back
+ * to the test classpath where vcs-git.jar is added as testRuntimeOnly.
+ *
+ * The test project provided by BasePlatformTestCase is used as the IntelliJ Project
+ * context (required by GitLineHandler), while the actual git root is the temp repo dir.
+ *
+ * Remote operations (push/pull) use a local bare repository as the remote.
+ */
+class VcsOperationsTest : BasePlatformTestCase() {
+
+    private val toolset = McpCompanionVcsToolset()
+
+    private lateinit var repoDir: File
+    private lateinit var bareDir: File
+
+    // ── Setup / Teardown ──────────────────────────────────────────────────────
+
+    override fun setUp() {
+        super.setUp()
+
+        repoDir = createTempDir("vcs-test-repo")
+        bareDir = createTempDir("vcs-test-bare")
+
+        // Init working repo and bare remote
+        git(repoDir, "init", "-b", "main")
+        git(repoDir, "config", "user.email", "test@test.com")
+        git(repoDir, "config", "user.name", "Test User")
+        git(repoDir, "config", "commit.gpgsign", "false")
+        git(bareDir, "init", "--bare", "-b", "main")
+
+        // Initial commit so the repo is not empty
+        File(repoDir, "README.md").writeText("# Test\n")
+        git(repoDir, "add", "README.md")
+        git(repoDir, "commit", "-m", "initial commit")
+
+        // Wire up remote
+        git(repoDir, "remote", "add", "origin", "file://${bareDir.absolutePath}")
+        git(repoDir, "push", "-u", "origin", "main")
+
+        // Make VFS aware of the repo dir
+        LocalFileSystem.getInstance().refreshAndFindFileByPath(repoDir.absolutePath)
+
+        // Pre-configure the git executable path so git4idea doesn't run its
+        // executable-detection subprocess (which can be flaky in headless mode).
+        val cl = toolset.git4ideaLoader()
+        if (cl != null) {
+            runCatching {
+                val gitPath = ProcessBuilder("which", "git").start()
+                    .inputStream.readBytes().toString(Charsets.UTF_8).trim()
+                val settings = cl.loadClass("git4idea.config.GitVcsApplicationSettings")
+                    .getMethod("getInstance").invoke(null)
+                settings.javaClass.getMethod("setPathToGit", String::class.java)
+                    .invoke(settings, gitPath)
+            }
+        }
+    }
+
+    override fun tearDown() {
+        runCatching { repoDir.deleteRecursively() }
+        runCatching { bareDir.deleteRecursively() }
+        super.tearDown()
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /** Runs a git command in [dir] and returns stdout. Asserts exit code == 0. */
+    private fun git(dir: File, vararg args: String, allowFailure: Boolean = false): String {
+        val pb = ProcessBuilder("git", *args).directory(dir).redirectErrorStream(true)
+        val proc = pb.start()
+        val out = proc.inputStream.readBytes().toString(Charsets.UTF_8).trim()
+        val code = proc.waitFor()
+        if (!allowFailure) assertEquals("git ${args.joinToString(" ")} failed ($code):\n$out", 0, code)
+        return out
+    }
+
+    /** Returns the VirtualFile for [repoDir], refreshing VFS if needed. */
+    private fun repoVFile() =
+        LocalFileSystem.getInstance().refreshAndFindFileByPath(repoDir.absolutePath)
+            ?: error("Cannot find VirtualFile for ${repoDir.absolutePath}")
+
+    /**
+     * Returns the git4idea classloader via PluginManagerCore.
+     * Works when bundledPlugin("Git4Idea") is declared in build.gradle.kts,
+     * which registers the git4idea plugin in the headless test environment.
+     */
+    private fun git4ideaLoader(): ClassLoader? = toolset.git4ideaLoader()
+
+    /**
+     * Runs gitExec via the toolset and returns (ok, output).
+     * Fails the test if git4idea is not available at all.
+     */
+    private fun execPair(command: String, vararg params: String): Pair<Boolean, String> {
+        val cl = git4ideaLoader() ?: error("git4idea classloader not available")
+        val result = toolset.gitExec(cl, project, repoVFile(), command, *params)
+        println("  git $command ${params.joinToString(" ")} → ok=${result.first} out='${result.second}'")
+        return result
+    }
+
+    /** Asserts success and returns the output. */
+    private fun exec(command: String, vararg params: String): String {
+        val (ok, out) = execPair(command, *params)
+        return if (ok) out else error("gitExec $command failed: $out")
+    }
+
+    // ── vcs_stage_files ───────────────────────────────────────────────────────
+
+    fun `test stage a new file`() {
+        if (git4ideaLoader() == null) { System.err.println("SKIP: git4idea not available"); return }
+        File(repoDir, "Hello.java").writeText("class Hello {}")
+        LocalFileSystem.getInstance().refreshAndFindFileByPath("${repoDir.absolutePath}/Hello.java")
+
+        exec("ADD", "--", "${repoDir.absolutePath}/Hello.java")
+
+        val status = git(repoDir, "status", "--short")
+        println("  git status = '$status'")
+        assertTrue("Hello.java should be staged (A )", status.contains("A"))
+        assertTrue("Hello.java should appear in status", status.contains("Hello.java"))
+    }
+
+    fun `test unstage a staged file`() {
+        if (git4ideaLoader() == null) { System.err.println("SKIP: git4idea not available"); return }
+        // Stage a file first with raw git
+        File(repoDir, "Staged.java").writeText("class Staged {}")
+        git(repoDir, "add", "Staged.java")
+        val statusBefore = git(repoDir, "status", "--short")
+        assertTrue("File should be staged before unstage", statusBefore.contains("A"))
+
+        exec("RESET", "HEAD", "--", "${repoDir.absolutePath}/Staged.java")
+
+        val statusAfter = git(repoDir, "status", "--short")
+        println("  status after unstage = '$statusAfter'")
+        assertFalse("File should NOT be staged after unstage", statusAfter.startsWith("A"))
+    }
+
+    // ── vcs_commit ────────────────────────────────────────────────────────────
+
+    fun `test commit staged changes`() {
+        if (git4ideaLoader() == null) { System.err.println("SKIP: git4idea not available"); return }
+        File(repoDir, "Commit.java").writeText("class Commit {}")
+        git(repoDir, "add", "Commit.java")
+
+        exec("COMMIT", "-m", "add Commit.java")
+
+        val log = git(repoDir, "log", "--oneline", "-1")
+        println("  git log = '$log'")
+        assertTrue("Commit message should appear in log", log.contains("add Commit.java"))
+    }
+
+    fun `test amend last commit`() {
+        if (git4ideaLoader() == null) { System.err.println("SKIP: git4idea not available"); return }
+        // Create a commit to amend
+        File(repoDir, "ToAmend.java").writeText("class ToAmend {}")
+        git(repoDir, "add", "ToAmend.java")
+        git(repoDir, "commit", "-m", "original message")
+
+        // Amend with a new message
+        exec("COMMIT", "--amend", "-m", "amended message")
+
+        val log = git(repoDir, "log", "--oneline", "-1")
+        println("  git log after amend = '$log'")
+        assertTrue("Amended message should be in log", log.contains("amended message"))
+        assertFalse("Original message should be gone", log.contains("original message"))
+    }
+
+    // ── vcs_stash ─────────────────────────────────────────────────────────────
+
+    fun `test stash push saves working tree changes`() {
+        if (git4ideaLoader() == null) { System.err.println("SKIP: git4idea not available"); return }
+        File(repoDir, "Stash.java").writeText("class Stash { int x = 1; }")
+        git(repoDir, "add", "Stash.java")
+        git(repoDir, "commit", "-m", "add Stash.java")
+
+        // Modify the file (working tree change)
+        File(repoDir, "Stash.java").writeText("class Stash { int x = 99; }")
+
+        exec("STASH", "push", "-m", "stash-test")
+
+        val stashList = exec("STASH", "list")
+        println("  stash list = '$stashList'")
+        assertTrue("Stash should be listed", stashList.contains("stash-test"))
+
+        val content = File(repoDir, "Stash.java").readText()
+        println("  file content after stash = '$content'")
+        assertFalse("Working tree should be clean after stash", content.contains("99"))
+    }
+
+    fun `test stash pop restores working tree changes`() {
+        if (git4ideaLoader() == null) { System.err.println("SKIP: git4idea not available"); return }
+        File(repoDir, "Pop.java").writeText("class Pop { int x = 1; }")
+        git(repoDir, "add", "Pop.java")
+        git(repoDir, "commit", "-m", "add Pop.java")
+
+        File(repoDir, "Pop.java").writeText("class Pop { int x = 42; }")
+        git(repoDir, "stash", "push", "-m", "pop-test")
+
+        exec("STASH", "pop", "stash@{0}")
+
+        val content = File(repoDir, "Pop.java").readText()
+        println("  file content after stash pop = '$content'")
+        assertTrue("Modified content should be restored after pop", content.contains("42"))
+    }
+
+    fun `test stash list is empty on clean repo`() {
+        if (git4ideaLoader() == null) { System.err.println("SKIP: git4idea not available"); return }
+        val result = exec("STASH", "list")
+        println("  stash list on clean repo = '$result'")
+        assertTrue("Stash list should be empty on clean repo", result.isBlank())
+    }
+
+    // ── vcs_push / vcs_pull ───────────────────────────────────────────────────
+
+    fun `test push to local bare remote`() {
+        if (git4ideaLoader() == null) { System.err.println("SKIP: git4idea not available"); return }
+        File(repoDir, "PushMe.java").writeText("class PushMe {}")
+        git(repoDir, "add", "PushMe.java")
+        git(repoDir, "commit", "-m", "add PushMe.java")
+
+        exec("PUSH", "origin", "main")
+
+        // Verify the bare remote received the commit
+        val bareLog = git(bareDir, "log", "--oneline", "-1")
+        println("  bare repo log after push = '$bareLog'")
+        assertTrue("Pushed commit should be in bare remote", bareLog.contains("add PushMe.java"))
+    }
+
+    fun `test pull from local bare remote`() {
+        if (git4ideaLoader() == null) { System.err.println("SKIP: git4idea not available"); return }
+        // Clone the bare repo into a third dir, make a commit, push it to bare
+        val cloneDir = createTempDir("vcs-test-clone")
+        try {
+            git(cloneDir, "clone", "file://${bareDir.absolutePath}", ".")
+            git(cloneDir, "config", "user.email", "test@test.com")
+            git(cloneDir, "config", "user.name", "Test User")
+            git(cloneDir, "config", "commit.gpgsign", "false")
+            File(cloneDir, "FromRemote.java").writeText("class FromRemote {}")
+            git(cloneDir, "add", "FromRemote.java")
+            git(cloneDir, "commit", "-m", "add FromRemote.java")
+            git(cloneDir, "push", "origin", "main")
+        } finally {
+            cloneDir.deleteRecursively()
+        }
+
+        // Now pull into our working repo
+        exec("PULL", "origin", "main")
+
+        val log = git(repoDir, "log", "--oneline", "-2")
+        println("  log after pull = '$log'")
+        assertTrue("Pulled commit should appear in log", log.contains("add FromRemote.java"))
+        assertTrue("FromRemote.java should exist after pull",
+            File(repoDir, "FromRemote.java").exists())
+    }
+
+    // ── get_vcs_log (via gitExec LOG) ─────────────────────────────────────────
+    //
+    // Tests the same git4idea reflection path used by the get_vcs_log tool.
+    // In a headless test the GitRepositoryManager won't find our temp repo,
+    // so we call gitExec directly with the repo root VirtualFile.
+
+    fun `test get_vcs_log - log shows all commits in order`() {
+        if (git4ideaLoader() == null) { System.err.println("SKIP: git4idea not available"); return }
+
+        // Make 3 additional commits on top of the initial one
+        File(repoDir, "Alpha.java").writeText("class Alpha {}")
+        git(repoDir, "add", "Alpha.java")
+        git(repoDir, "commit", "-m", "add Alpha.java")
+
+        File(repoDir, "Beta.java").writeText("class Beta {}")
+        git(repoDir, "add", "Beta.java")
+        git(repoDir, "commit", "-m", "add Beta.java")
+
+        File(repoDir, "Gamma.java").writeText("class Gamma {}")
+        git(repoDir, "add", "Gamma.java")
+        git(repoDir, "commit", "-m", "add Gamma.java")
+
+        val (ok, out) = execPair("LOG", "--oneline", "-5")
+        println("  git log (5) =\n$out")
+
+        assertTrue("LOG command should succeed", ok)
+        assertTrue("Log should contain 'add Alpha.java'", out.contains("add Alpha.java"))
+        assertTrue("Log should contain 'add Beta.java'",  out.contains("add Beta.java"))
+        assertTrue("Log should contain 'add Gamma.java'", out.contains("add Gamma.java"))
+        assertTrue("Log should contain 'initial commit'", out.contains("initial commit"))
+
+        // Most recent commit must appear first (log is reverse-chronological)
+        val idxGamma = out.indexOf("add Gamma.java")
+        val idxAlpha = out.indexOf("add Alpha.java")
+        assertTrue("Gamma (newest) must appear before Alpha (oldest)", idxGamma < idxAlpha)
+    }
+
+    fun `test get_vcs_log - log filtered by file`() {
+        if (git4ideaLoader() == null) { System.err.println("SKIP: git4idea not available"); return }
+
+        File(repoDir, "Foo.java").writeText("class Foo {}")
+        git(repoDir, "add", "Foo.java")
+        git(repoDir, "commit", "-m", "add Foo.java")
+
+        File(repoDir, "Bar.java").writeText("class Bar {}")
+        git(repoDir, "add", "Bar.java")
+        git(repoDir, "commit", "-m", "add Bar.java")
+
+        val (ok, out) = execPair("LOG", "--oneline", "--", "Foo.java")
+        println("  git log -- Foo.java = '$out'")
+        assertTrue("LOG --  Foo.java should succeed", ok)
+        assertTrue("Should contain Foo commit", out.contains("add Foo.java"))
+        assertFalse("Should NOT contain Bar commit (different file)", out.contains("add Bar.java"))
+    }
+
+    // ── get_vcs_branch (via gitExec BRANCH) ───────────────────────────────────
+    //
+    // Tests the git4idea BRANCH command reflection, which is the core of get_vcs_branch.
+
+    fun `test get_vcs_branch - current branch is main`() {
+        if (git4ideaLoader() == null) { System.err.println("SKIP: git4idea not available"); return }
+
+        val (ok, out) = execPair("BRANCH", "--show-current")
+        println("  git branch --show-current = '$out'")
+        assertTrue("BRANCH command should succeed", ok)
+        assertEquals("Current branch should be 'main'", "main", out.trim())
+    }
+
+    fun `test get_vcs_branch - branch list after creating new branch`() {
+        if (git4ideaLoader() == null) { System.err.println("SKIP: git4idea not available"); return }
+
+        // Create a feature branch via raw git
+        git(repoDir, "branch", "feature/test-branch")
+
+        val (ok, out) = execPair("BRANCH")
+        println("  git branch = '$out'")
+        assertTrue("BRANCH command should succeed", ok)
+        assertTrue("Branch list should contain 'main'",                out.contains("main"))
+        assertTrue("Branch list should contain 'feature/test-branch'", out.contains("feature/test-branch"))
+    }
+
+    // ── get_vcs_changes (via gitExec STATUS) ──────────────────────────────────
+    //
+    // Tests the ability to detect working tree changes via the git4idea reflection path.
+    // The production get_vcs_changes tool uses IntelliJ's ChangeListManager (IDE-level);
+    // here we verify the underlying git STATUS command behaves as expected.
+
+    fun `test get_vcs_changes - detect uncommitted new file`() {
+        if (git4ideaLoader() == null) { System.err.println("SKIP: git4idea not available"); return }
+
+        // Create a new untracked file
+        File(repoDir, "NewFile.java").writeText("class NewFile {}")
+
+        val (ok, out) = execPair("STATUS", "--short")
+        println("  git status --short = '$out'")
+        assertTrue("STATUS should succeed", ok)
+        assertTrue("Status should show untracked NewFile.java", out.contains("NewFile.java"))
+        assertTrue("Untracked file should have '??' marker", out.contains("??"))
+    }
+
+    fun `test get_vcs_changes - detect modification and staged file`() {
+        if (git4ideaLoader() == null) { System.err.println("SKIP: git4idea not available"); return }
+
+        // Modify README.md (already committed) — unstaged change
+        File(repoDir, "README.md").appendText("## Section\n")
+
+        // Create and stage a brand-new file
+        File(repoDir, "Staged.java").writeText("class Staged {}")
+        git(repoDir, "add", "Staged.java")
+
+        val (ok, out) = execPair("STATUS", "--short")
+        println("  git status --short = '$out'")
+        assertTrue("STATUS should succeed", ok)
+        assertTrue("Modified README.md should appear", out.contains("README.md"))
+        assertTrue("Staged Staged.java should appear with 'A'", out.contains("A") && out.contains("Staged.java"))
+    }
+
+    fun `test get_vcs_changes - no changes on clean working tree`() {
+        if (git4ideaLoader() == null) { System.err.println("SKIP: git4idea not available"); return }
+
+        val (ok, out) = execPair("STATUS", "--short")
+        println("  git status --short (clean) = '$out'")
+        assertTrue("STATUS should succeed", ok)
+        assertTrue("Status should be empty on clean working tree", out.isBlank())
+    }
+
+    fun `test get_vcs_changes - after multiple commits only unstaged changes appear`() {
+        if (git4ideaLoader() == null) { System.err.println("SKIP: git4idea not available"); return }
+
+        // Three commits
+        for (name in listOf("One", "Two", "Three")) {
+            File(repoDir, "$name.java").writeText("class $name {}")
+            git(repoDir, "add", "$name.java")
+            git(repoDir, "commit", "-m", "add $name.java")
+        }
+
+        // Verify working tree is clean after the commits
+        val (ok, out) = execPair("STATUS", "--short")
+        println("  status after 3 commits = '$out'")
+        assertTrue("STATUS should succeed", ok)
+        assertTrue("Working tree should be clean after commits", out.isBlank())
+
+        // Now make an uncommitted change
+        File(repoDir, "One.java").writeText("class One { /* modified */ }")
+        val (ok2, out2) = execPair("STATUS", "--short")
+        println("  status after modification = '$out2'")
+        assertTrue("Modified One.java should appear", out2.contains("One.java"))
+        assertFalse("Two.java should NOT appear", out2.contains("Two.java"))
+        assertFalse("Three.java should NOT appear", out2.contains("Three.java"))
+    }
+}

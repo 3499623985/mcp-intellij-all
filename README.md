@@ -79,6 +79,11 @@ An IntelliJ IDEA plugin that extends the built-in [JetBrains MCP Server](https:/
 | `get_vcs_log` | Recent commit history: hash, author, date, subject, and changed files. Filter by file or branch (Git) |
 | `get_vcs_blame` | Line-by-line blame annotation: who last modified each line, when, and in which commit (any VCS) |
 | `get_local_history` | IntelliJ Local History for a file, directory, or the whole project. Returns timestamped revisions with optional unified diffs |
+| `vcs_stage_files` | Stage or unstage files in the Git index (`action="stage"` / `"unstage"`) |
+| `vcs_commit` | Create a Git commit from staged changes; pass `amend=true` to amend the last commit |
+| `vcs_push` | Push the current branch to its remote tracking branch (`git push`) |
+| `vcs_pull` | Pull from the remote tracking branch; pass `rebase=true` for `--rebase` |
+| `vcs_stash` | Manage Git stashes: `action="push"` / `"pop"` / `"apply"` / `"drop"` / `"list"` |
 
 ### General
 | Tool | Description |

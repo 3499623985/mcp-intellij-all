@@ -573,12 +573,271 @@ class McpCompanionVcsToolset : McpToolset {
         }
     }
 
+    // ── vcs_stage_files ───────────────────────────────────────────────────────
+
+    @McpTool(name = "vcs_stage_files")
+    @McpDescription(description = """
+        Stages or unstages files in the Git index.
+        - action: "stage" (git add) or "unstage" (git reset HEAD) — default: "stage"
+        - files: file paths relative to the project root; if empty and action is "stage", stages all changes (git add -A)
+        - projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted.
+    """)
+    suspend fun vcs_stage_files(
+        action: String = "stage",
+        files: List<String> = emptyList(),
+        projectPath: String? = null
+    ): String {
+        disabledMessage("vcs_stage_files")?.let { return it }
+        val project = resolveProject(projectPath)
+        return withContext(Dispatchers.IO) {
+            try {
+                val cl = git4ideaLoader() ?: return@withContext "Git plugin (Git4Idea) not available."
+                val base = project.basePath ?: ""
+                val repo = getFirstRepo(cl, project) ?: return@withContext "No Git repository found."
+                val root = invoke(repo, "getRoot") as? com.intellij.openapi.vfs.VirtualFile
+                    ?: return@withContext "Cannot get repository root."
+                val absPaths = files.map { if (it.startsWith("/")) it else "$base/$it" }
+                val (ok, out) = when (action.lowercase()) {
+                    "stage"   -> if (absPaths.isEmpty()) gitExec(cl, project, root, "ADD", "-A")
+                                 else gitExec(cl, project, root, "ADD", "--", *absPaths.toTypedArray())
+                    "unstage" -> {
+                        if (absPaths.isEmpty()) return@withContext "Specify files to unstage."
+                        gitExec(cl, project, root, "RESET", "HEAD", "--", *absPaths.toTypedArray())
+                    }
+                    else -> return@withContext "Unknown action '$action'. Use 'stage' or 'unstage'."
+                }
+                vfsRefresh(project)
+                if (ok) "${action.replaceFirstChar { it.uppercase() }}d: ${files.ifEmpty { listOf("all changes") }.joinToString(", ")}"
+                else "Error: $out"
+            } catch (e: Exception) { "Error: ${e.javaClass.simpleName}: ${e.message}" }
+        }
+    }
+
+    // ── vcs_commit ────────────────────────────────────────────────────────────
+
+    @McpTool(name = "vcs_commit")
+    @McpDescription(description = """
+        Creates a Git commit with the given message (commits all staged changes).
+        - message: commit message (required)
+        - amend: if true, amends the previous commit instead of creating a new one (default: false)
+        - projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted.
+    """)
+    suspend fun vcs_commit(
+        message: String,
+        amend: Boolean = false,
+        projectPath: String? = null
+    ): String {
+        disabledMessage("vcs_commit")?.let { return it }
+        val project = resolveProject(projectPath)
+        return withContext(Dispatchers.IO) {
+            try {
+                val cl = git4ideaLoader() ?: return@withContext "Git plugin (Git4Idea) not available."
+                val repo = getFirstRepo(cl, project) ?: return@withContext "No Git repository found."
+                val root = invoke(repo, "getRoot") as? com.intellij.openapi.vfs.VirtualFile
+                    ?: return@withContext "Cannot get repository root."
+                val params = buildList {
+                    add("-m"); add(message)
+                    if (amend) add("--amend")
+                }
+                val (ok, out) = gitExec(cl, project, root, "COMMIT", *params.toTypedArray())
+                if (ok) { vfsRefresh(project); "Committed: \"$message\"" }
+                else "Error: $out"
+            } catch (e: Exception) { "Error: ${e.javaClass.simpleName}: ${e.message}" }
+        }
+    }
+
+    // ── vcs_push ──────────────────────────────────────────────────────────────
+
+    @McpTool(name = "vcs_push")
+    @McpDescription(description = """
+        Pushes the current branch to its remote tracking branch (git push).
+        - remote: remote name (default: "" = tracked remote, usually "origin")
+        - branch: branch name to push (default: "" = current branch)
+        - setUpstream: if true, sets the upstream tracking reference with -u (default: false)
+        - projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted.
+    """)
+    suspend fun vcs_push(
+        remote: String = "",
+        branch: String = "",
+        setUpstream: Boolean = false,
+        projectPath: String? = null
+    ): String {
+        disabledMessage("vcs_push")?.let { return it }
+        val project = resolveProject(projectPath)
+        return withContext(Dispatchers.IO) {
+            try {
+                val cl = git4ideaLoader() ?: return@withContext "Git plugin (Git4Idea) not available."
+                val repo = getFirstRepo(cl, project) ?: return@withContext "No Git repository found."
+                val root = invoke(repo, "getRoot") as? com.intellij.openapi.vfs.VirtualFile
+                    ?: return@withContext "Cannot get repository root."
+                val currentBranch = runCatching {
+                    invoke(repo, "getCurrentBranch")?.let { invoke(it, "getName")?.toString() }
+                }.getOrNull()
+                val params = buildList {
+                    if (setUpstream) add("-u")
+                    if (remote.isNotBlank()) add(remote)
+                    if (branch.isNotBlank()) add(branch)
+                }
+                val (ok, out) = gitExec(cl, project, root, "PUSH", *params.toTypedArray())
+                if (ok) "Pushed '${branch.ifBlank { currentBranch ?: "current branch" }}' successfully"
+                else "Error: $out"
+            } catch (e: Exception) { "Error: ${e.javaClass.simpleName}: ${e.message}" }
+        }
+    }
+
+    // ── vcs_pull ──────────────────────────────────────────────────────────────
+
+    @McpTool(name = "vcs_pull")
+    @McpDescription(description = """
+        Pulls (fetches + integrates) from the remote tracking branch (git pull).
+        - rebase: if true, uses --rebase instead of merge (default: false)
+        - remote: remote name (default: "" = tracked remote)
+        - branch: branch to pull (default: "" = current tracking branch)
+        - projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted.
+    """)
+    suspend fun vcs_pull(
+        rebase: Boolean = false,
+        remote: String = "",
+        branch: String = "",
+        projectPath: String? = null
+    ): String {
+        disabledMessage("vcs_pull")?.let { return it }
+        val project = resolveProject(projectPath)
+        return withContext(Dispatchers.IO) {
+            try {
+                val cl = git4ideaLoader() ?: return@withContext "Git plugin (Git4Idea) not available."
+                val repo = getFirstRepo(cl, project) ?: return@withContext "No Git repository found."
+                val root = invoke(repo, "getRoot") as? com.intellij.openapi.vfs.VirtualFile
+                    ?: return@withContext "Cannot get repository root."
+                val params = buildList {
+                    if (rebase) add("--rebase")
+                    if (remote.isNotBlank()) add(remote)
+                    if (branch.isNotBlank()) add(branch)
+                }
+                val (ok, out) = gitExec(cl, project, root, "PULL", *params.toTypedArray())
+                if (ok) { vfsRefresh(project); "Pull successful${if (out.isNotBlank()) ": $out" else ""}" }
+                else "Error: $out"
+            } catch (e: Exception) { "Error: ${e.javaClass.simpleName}: ${e.message}" }
+        }
+    }
+
+    // ── vcs_stash ─────────────────────────────────────────────────────────────
+
+    @McpTool(name = "vcs_stash")
+    @McpDescription(description = """
+        Manages Git stashes.
+        - action: "list" | "push" | "pop" | "apply" | "drop" — default: "list"
+        - message: stash description for "push" (optional)
+        - ref: stash reference for "apply" / "pop" / "drop" — default: "stash@{0}" (most recent)
+        - projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted.
+    """)
+    suspend fun vcs_stash(
+        action: String = "list",
+        message: String = "",
+        ref: String = "stash@{0}",
+        projectPath: String? = null
+    ): String {
+        disabledMessage("vcs_stash")?.let { return it }
+        val project = resolveProject(projectPath)
+        return withContext(Dispatchers.IO) {
+            try {
+                val cl = git4ideaLoader() ?: return@withContext "Git plugin (Git4Idea) not available."
+                val repo = getFirstRepo(cl, project) ?: return@withContext "No Git repository found."
+                val root = invoke(repo, "getRoot") as? com.intellij.openapi.vfs.VirtualFile
+                    ?: return@withContext "Cannot get repository root."
+                val params = when (action.lowercase()) {
+                    "list"  -> arrayOf("list")
+                    "push"  -> if (message.isNotBlank()) arrayOf("push", "-m", message) else arrayOf("push")
+                    "pop"   -> arrayOf("pop", ref)
+                    "apply" -> arrayOf("apply", ref)
+                    "drop"  -> arrayOf("drop", ref)
+                    else    -> return@withContext "Unknown action '$action'. Use: list, push, pop, apply, drop."
+                }
+                val (ok, out) = gitExec(cl, project, root, "STASH", *params)
+                if (ok) {
+                    if (action != "list") vfsRefresh(project)
+                    out.ifBlank { "${action.replaceFirstChar { it.uppercase() }} successful" }
+                } else "Error: $out"
+            } catch (e: Exception) { "Error: ${e.javaClass.simpleName}: ${e.message}" }
+        }
+    }
+
     // ── Private helpers ───────────────────────────────────────────────────────
 
-    private fun git4ideaLoader(): ClassLoader? =
+    internal fun git4ideaLoader(): ClassLoader? =
         runCatching {
             PluginManagerCore.getPlugin(PluginId.getId("Git4Idea"))?.pluginClassLoader
         }.getOrNull()
+
+    /** Returns the first Git repository found in the project. */
+    internal fun getFirstRepo(cl: ClassLoader, project: com.intellij.openapi.project.Project): Any? = runCatching {
+        val mgr = cl.loadClass("git4idea.repo.GitRepositoryManager")
+        mgr.getMethod("getInstance", com.intellij.openapi.project.Project::class.java)
+            .invoke(null, project)
+            .let { mgr.getMethod("getRepositories").invoke(it) }
+            .let { @Suppress("UNCHECKED_CAST") it as? List<Any> }
+            ?.firstOrNull()
+    }.getOrNull()
+
+    /**
+     * Runs a git command via GitLineHandler and returns (success, output).
+     * [command] = GitCommand field name (e.g. "ADD", "COMMIT", "PUSH", "PULL", "STASH", "RESET").
+     * [params]  = extra git arguments passed to the handler.
+     */
+    internal fun gitExec(
+        cl: ClassLoader,
+        project: com.intellij.openapi.project.Project,
+        root: com.intellij.openapi.vfs.VirtualFile,
+        command: String,
+        vararg params: String
+    ): Pair<Boolean, String> = runCatching {
+        val cmdClass = cl.loadClass("git4idea.commands.GitCommand")
+        val cmd = cmdClass.getField(command).get(null)
+        val handlerClass = cl.loadClass("git4idea.commands.GitLineHandler")
+        val ctor = handlerClass.constructors.firstOrNull { c ->
+            c.parameterCount == 3 &&
+            com.intellij.openapi.project.Project::class.java.isAssignableFrom(c.parameterTypes[0]) &&
+            com.intellij.openapi.vfs.VirtualFile::class.java.isAssignableFrom(c.parameterTypes[1])
+        } ?: return@runCatching false to "GitLineHandler(Project, VirtualFile, GitCommand) constructor not found"
+        val handler = ctor.newInstance(project, root, cmd)
+        if (params.isNotEmpty()) {
+            val addM = generateSequence(handlerClass as Class<*>?) { it.superclass }
+                .flatMap { it.declaredMethods.asSequence() }
+                .firstOrNull { m ->
+                    m.name == "addParameters" && m.parameterCount == 1 &&
+                    (m.parameterTypes[0].isArray || java.util.List::class.java.isAssignableFrom(m.parameterTypes[0]))
+                }?.also { it.isAccessible = true }
+            if (addM != null) {
+                if (addM.parameterTypes[0].isArray) addM.invoke(handler, params as Any)
+                else addM.invoke(handler, params.toList())
+            }
+        }
+        val gitClass = cl.loadClass("git4idea.commands.Git")
+        val git = gitClass.getMethod("getInstance").invoke(null)
+        // Pick the runCommand(GitLineHandler) overload, not runCommand(Computable<GitLineHandler>)
+        val runM = gitClass.methods.firstOrNull { m ->
+            m.name == "runCommand" && m.parameterCount == 1 &&
+            m.parameterTypes[0].isAssignableFrom(handlerClass)
+        } ?: return@runCatching false to "Git.runCommand(GitLineHandler) not found"
+        val result = runM.invoke(git, handler)
+        val ok = ((invoke(result, "success") ?: invoke(result, "isSuccess")) as? Boolean) ?: false
+        @Suppress("UNCHECKED_CAST")
+        val out = ((if (ok) invoke(result, "getOutput") else invoke(result, "getErrorOutput")) as? List<String>)?.joinToString("\n") ?: ""
+        ok to out
+    }.getOrElse { e ->
+        // Unwrap InvocationTargetException so callers see the real exception
+        val root = generateSequence(e) { (it as? java.lang.reflect.InvocationTargetException)?.cause ?: it.cause }
+            .firstOrNull { it !is java.lang.reflect.InvocationTargetException } ?: e
+        false to "${root.javaClass.simpleName}: ${root.message}"
+    }
+
+    /** Refreshes VFS and VCS change list so IntelliJ picks up index / working tree changes. */
+    private fun vfsRefresh(project: com.intellij.openapi.project.Project) {
+        runCatching<Unit> {
+            com.intellij.openapi.vfs.VirtualFileManager.getInstance().asyncRefresh(null)
+            com.intellij.openapi.vcs.changes.VcsDirtyScopeManager.getInstance(project).markEverythingDirty()
+        }
+    }
 
     /**
      * Extracts timestamp from a ChangeSet, Revision, RevisionItem, or RecentChange object.
