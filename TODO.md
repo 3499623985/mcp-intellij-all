@@ -33,8 +33,8 @@
 
 ### Merge / Rebase
 - **vcs_merge_branch** — merger une branche dans la courante (via API IntelliJ)
+- **vcs_rebase** — rebaser la branche courante sur une autre (`git rebase <branch>`)
 - **get_vcs_conflicts** — lister les fichiers en conflit de merge avec leur contenu
-- rebase ?
 
 ### Diff enrichi
 - **get_vcs_file_history** — historique des commits qui ont touché un fichier précis
