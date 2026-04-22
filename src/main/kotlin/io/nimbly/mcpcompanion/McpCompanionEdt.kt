@@ -5,6 +5,7 @@ import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.openapi.vfs.VirtualFile
+import com.intellij.openapi.vfs.VfsUtil
 
 /**
  * Executes [action] on the EDT using ModalityState.any(), so the block runs
@@ -16,12 +17,14 @@ import com.intellij.openapi.vfs.VirtualFile
  */
 /**
  * Tries to resolve [filePath] to a VirtualFile using several strategies, in order:
- * 1. Absolute path as-is
+ * 1. Absolute path as-is (works for files outside the project)
  * 2. Relative to project basePath
  * 3. Absolute path that accidentally contains basePath as prefix (double-prefix bug)
- * 4. Fallback: VFS refresh + retry for recently created files not yet indexed
+ * 4. VFS refresh + retry for recently created files not yet indexed
+ * 5. VfsUtil.findFileByIoFile with refresh=true — last resort for files outside the project
+ *    that IntelliJ has never indexed (e.g. ~/.claude/ files, /tmp/ files)
  *
- * Returns null only when all strategies fail.
+ * Returns null only when all strategies fail (file does not exist on disk).
  */
 internal fun resolveFilePath(project: Project, filePath: String): VirtualFile? {
     val lfs = LocalFileSystem.getInstance()
@@ -52,6 +55,15 @@ internal fun resolveFilePath(project: Project, filePath: String): VirtualFile? {
         lfs.refreshAndFindFileByPath("$basePath/$normalized")?.let { return it }
     }
 
+    // 5. VfsUtil with refresh — handles files outside the project root that IntelliJ
+    //    has never indexed (e.g. ~/.claude/*, scratch files, files in other projects)
+    if (normalized.startsWith("/")) {
+        val ioFile = java.io.File(normalized)
+        if (ioFile.exists()) {
+            VfsUtil.findFileByIoFile(ioFile, true)?.let { return it }
+        }
+    }
+
     return null
 }
 
@@ -71,7 +83,7 @@ internal fun resolveFilePathOrError(project: Project, filePath: String): Pair<Vi
         appendLine("  - relative to root:   $basePath/$normalized")
         if (normalized.startsWith(basePath)) appendLine("  - stripped duplicate: $basePath/${normalized.removePrefix(basePath).trimStart('/')}")
         appendLine("Project root: $basePath")
-        append("Hint: prefer a path relative to the project root (e.g. 'src/main/java/Foo.java')")
+        append("Hint: use an absolute path (e.g. '/Users/you/file.md') or a path relative to the project root (e.g. 'src/main/java/Foo.java'). Files outside the project are supported with absolute paths.")
     }
     return null to error
 }

@@ -77,7 +77,7 @@ class McpCompanionEditorToolset : McpToolset {
     @McpTool(name = "navigate_to")
     @McpDescription(description = """
         Opens a file in the editor and places the cursor at the given line and column.
-        filePath: path relative to the project root.
+        filePath: path relative to the project root, or an absolute path — files outside the project are fully supported (e.g. /Users/you/.claude/notes.md).
         line: 1-based line number.
         column: 1-based column number (default: 1).
 
@@ -101,7 +101,7 @@ class McpCompanionEditorToolset : McpToolset {
     @McpDescription(description = """
         Opens a file (if not already open), brings it to the foreground, scrolls to the target
         range and selects it so the user can copy it directly (Cmd+C).
-        filePath: path relative to the project root.
+        filePath: path relative to the project root, or an absolute path — files outside the project are supported.
         startLine/startColumn: 1-based position of the first character to select.
         endLine/endColumn: 1-based position of the LAST character to select (inclusive).
         Example: to select "Hello" on line 3 starting at column 5, use startColumn=5, endColumn=9.
@@ -137,7 +137,7 @@ class McpCompanionEditorToolset : McpToolset {
         exact text zones using the IDE's standard search-result color (theme-aware), and scrolls
         to the first highlighted range.
         Useful to show where a variable is declared and all its usages at once.
-        filePath: path relative to the project root.
+        filePath: path relative to the project root, or an absolute path — files outside the project are supported.
         ranges: comma-separated list of "startLine:startCol:endLine:endCol" (1-based).
                 startCol is the column of the first character; endCol is the column of the LAST character (inclusive).
                 Example: to highlight "Random" at line 17 columns 34-49, use "17:34:17:49".

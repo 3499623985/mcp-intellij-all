@@ -180,7 +180,7 @@ IMPORTANT: Always prefer IntelliJ tools over native Write/Edit/Bash(rm) for any 
         After calling this tool, Cmd+Z (Undo "MCP Replace") works normally in the editor.
         Use this instead of replace_specific_text when you want the change to be undoable.
         Parameters:
-        - pathInProject: relative path from the project root (e.g. "src/Main.java")
+        - pathInProject: path relative to the project root, or an absolute path — files outside the project are supported (e.g. "/Users/you/.claude/notes.md")
         - oldText: exact text to find and replace (first occurrence)
         - newText: replacement text
         - projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
