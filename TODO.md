@@ -30,6 +30,11 @@
 - ~~**vcs_stash**~~ ✅ 2.12.0
 - ~~**vcs_create_branch**~~ ✅ 2.13.0
 - ~~**vcs_checkout_branch**~~ ✅ 2.13.0
+- **vcs_delete_branch** — supprimer une branche locale ou distante (`git branch -d` / `git push origin --delete`)
+- **vcs_fetch** — mettre à jour les refs distantes sans merger (`git fetch`)
+- **vcs_reset** — reculer la branche sur un commit précédent (`--soft` / `--mixed` / `--hard`)
+- **vcs_revert** — créer un commit qui annule un commit existant (`git revert <hash>`)
+- **vcs_cherry_pick** — appliquer un commit spécifique sur la branche courante (`git cherry-pick <hash>`)
 
 ### Merge / Rebase
 - **vcs_merge_branch** — merger une branche dans la courante (via API IntelliJ)
