@@ -200,20 +200,20 @@ IMPORTANT: Always prefer IntelliJ tools over native Write/Edit/Bash(rm) for any 
         } ?: return "error: cannot open document for: $pathInProject"
         val offset = document.text.indexOf(oldText)
         if (offset == -1) return "error: text not found in file"
-        // Write actions must run from a write-safe context. invokeLater posts to the EDT
-        // event queue (write-safe), unlike invokeAndWait(ModalityState.any()) which is write-unsafe.
-        val done = java.util.concurrent.atomic.AtomicBoolean(false)
-        ApplicationManager.getApplication().invokeLater {
-            WriteCommandAction.runWriteCommandAction(project, "MCP Replace", null, {
-                document.replaceString(offset, offset + oldText.length, newText)
-            })
-            done.set(true)
+        // Run synchronously on the EDT so the caller gets a definitive result before returning.
+        // Using runOnEdt (invokeAndWait + ModalityState.any()) — same approach as navigate_to,
+        // select_text, highlight_text. This eliminates any race condition where a timeout causes
+        // the AI to retry and apply the replacement twice.
+        return runOnEdt {
+            try {
+                WriteCommandAction.runWriteCommandAction(project, "MCP Replace", null, Runnable {
+                    document.replaceString(offset, offset + oldText.length, newText)
+                })
+                "ok"
+            } catch (e: Exception) {
+                "error: ${e.javaClass.simpleName}: ${e.message}"
+            }
         }
-        val deadline = System.currentTimeMillis() + 5000
-        while (!done.get() && System.currentTimeMillis() < deadline) {
-            Thread.sleep(50)
-        }
-        return if (done.get()) "ok" else "error: write action timed out"
     }
 
     // ── execute_ide_action ───────────────────────────────────────────────────
