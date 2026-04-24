@@ -13,7 +13,7 @@ val secrets = Properties().apply {
 }
 
 group = "io.nimbly"
-version = "2.15.0"
+version = "2.15.1"
 
 repositories {
     mavenCentral()
@@ -47,6 +47,7 @@ intellijPlatform {
         }
         changeNotes = """
             <ul>
+                <li><b>2.15.1</b> — Fix: <code>get_debug_variables</code> now works with non-JVM debuggers (JavaScript/TypeScript/Node, Python, Ruby, PHP). Variables exposed in scope groups (<code>Local</code>, <code>Closure</code>, <code>Global</code>, …) are returned with a dotted prefix. Thanks to @simontong for the report (issue #1).</li>
                 <li><b>2.15.0</b> — New VCS tools: <code>get_vcs_file_history</code>, <code>get_vcs_diff_between_branches</code>, <code>vcs_show_commit</code>, <code>vcs_reset</code>, <code>vcs_revert</code>, <code>vcs_cherry_pick</code>, and <code>vcs_delete_branch</code> (disabled by default). Plus a new editor tool <code>show_diff</code> to open IntelliJ's built-in diff viewer for previewing proposed changes before applying them.</li>
                 <li><b>2.14.0</b> — New VCS tools: <code>vcs_fetch</code>, <code>vcs_merge_branch</code>, <code>vcs_rebase</code>, <code>get_vcs_conflicts</code> (list conflicted files with content), and <code>vcs_open_merge_tool</code> (open IntelliJ's three-way merge dialog).</li>
                 <li><b>2.13.0</b> — New VCS branch tools: <code>vcs_create_branch</code> (create and optionally switch to a new branch) and <code>vcs_checkout_branch</code> (switch to an existing branch).</li>

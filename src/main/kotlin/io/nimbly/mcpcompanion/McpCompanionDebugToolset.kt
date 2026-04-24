@@ -15,8 +15,10 @@ import com.intellij.xdebugger.XDebuggerManager
 import com.intellij.xdebugger.frame.XCompositeNode
 import com.intellij.xdebugger.frame.XDebuggerTreeNodeHyperlink
 import com.intellij.xdebugger.frame.XFullValueEvaluator
+import com.intellij.xdebugger.frame.XStackFrame
 import com.intellij.xdebugger.frame.XValue
 import com.intellij.xdebugger.frame.XValueChildrenList
+import com.intellij.xdebugger.frame.XValueGroup
 import com.intellij.xdebugger.frame.XValueNode
 import com.intellij.xdebugger.frame.XValuePlace
 import com.intellij.xdebugger.frame.presentation.XValuePresentation
@@ -51,7 +53,11 @@ class McpCompanionDebugToolset : McpToolset {
     @McpDescription(description = """
         Returns the local variables and their values from the current debugger stack frame.
         Only available when a debug session is paused at a breakpoint.
-        Useful to inspect variable state during debugging.
+
+        Works with all XDebugger-based debuggers (Java/Kotlin, JavaScript/TypeScript/Node, Python,
+        Ruby, PHP, Go…). Variables exposed by the debugger inside scope groups (e.g. "Local",
+        "Closure", "Global" for JS/TS; "locals" / "globals" for Python) are recursively flattened
+        and returned with a dotted prefix — e.g. "Local.greeting", "Closure.cache".
 
         projectPath: absolute path of the target project's root — defaults to the currently-focused project if omitted. Useful when several IntelliJ windows are open in the same JVM.
     """)
@@ -64,27 +70,100 @@ class McpCompanionDebugToolset : McpToolset {
         val frame = runOnEdt { session.currentStackFrame }
             ?: return "No stack frame — program may still be running"
 
-        val children = mutableListOf<Pair<String, XValue>>()
-        val childrenLatch = CountDownLatch(1)
-        runOnEdt {
-            frame.computeChildren(object : XCompositeNode {
-                override fun addChildren(list: XValueChildrenList, last: Boolean) {
-                    for (i in 0 until list.size()) children.add(list.getName(i) to list.getValue(i))
-                    if (last) childrenLatch.countDown()
-                }
-                override fun tooManyChildren(remaining: Int) { childrenLatch.countDown() }
-                override fun tooManyChildren(remaining: Int, addNextChildren: Runnable) { childrenLatch.countDown() }
-                override fun setAlreadySorted(alreadySorted: Boolean) {}
-                override fun setErrorMessage(errorMessage: String) { childrenLatch.countDown() }
-                override fun setErrorMessage(errorMessage: String, link: XDebuggerTreeNodeHyperlink?) { childrenLatch.countDown() }
-                override fun setMessage(message: String, icon: Icon?, attributes: com.intellij.ui.SimpleTextAttributes, link: XDebuggerTreeNodeHyperlink?) {}
-                override fun isObsolete() = false
-            })
-        }
-        childrenLatch.await(5, TimeUnit.SECONDS)
-
-        val variables = children.map { (name, xValue) -> resolveDebugVariable(name, xValue) }
+        val variables = mutableListOf<DebugVariable>()
+        collectFrameVariables(frame, prefix = "", out = variables, depth = 0)
         return Json.encodeToString(DebugVariablesOutput(session = session.sessionName, variables = variables))
+    }
+
+    /**
+     * Recursively walks a frame (or a scope group) and flattens its variables.
+     *
+     * Why recursion is needed: in Java/Kotlin debuggers, all locals/arguments are reported as
+     * direct children of the stack frame via [XValueChildrenList.add]. But in JavaScript / TypeScript
+     * (Node, Bun, Chrome), Python, Ruby, PHP and most non-JVM languages, the debugger groups
+     * variables into [XValueGroup] scopes ("Local", "Closure", "Global", …) added via
+     * [XValueChildrenList.addTopGroup] / [XValueChildrenList.addBottomGroup]. The IDE Variables pane
+     * auto-expands these groups, but our previous implementation only read [XValueChildrenList.size]
+     * (regular children), which is 0 for those debuggers — hence the empty array returned to the AI.
+     *
+     * This helper:
+     *   1. drains the regular children of [frame] (or a group)
+     *   2. drains every top/bottom XValueGroup, recursing one level deeper (capped at [maxDepth] to
+     *      avoid runaway recursion if a debugger nests groups indefinitely)
+     *   3. prefixes group children with the group name so callers can distinguish e.g. "Local.x"
+     *      from "Closure.x" without name collisions.
+     */
+    private fun collectFrameVariables(
+        frame: XStackFrame,
+        prefix: String,
+        out: MutableList<DebugVariable>,
+        depth: Int,
+        maxDepth: Int = 2
+    ) {
+        val (regulars, groups) = computeChildrenSync { frame.computeChildren(it) }
+        for ((name, xValue) in regulars) {
+            val fullName = if (prefix.isEmpty()) name else "$prefix.$name"
+            out += resolveDebugVariable(fullName, xValue)
+        }
+        if (depth < maxDepth) {
+            for (group in groups) collectGroupVariables(group, prefix, out, depth + 1, maxDepth)
+        }
+    }
+
+    private fun collectGroupVariables(
+        group: XValueGroup,
+        prefix: String,
+        out: MutableList<DebugVariable>,
+        depth: Int,
+        maxDepth: Int
+    ) {
+        val groupName = group.name
+        val newPrefix = if (prefix.isEmpty()) groupName else "$prefix.$groupName"
+        val (regulars, groups) = computeChildrenSync { group.computeChildren(it) }
+        for ((name, xValue) in regulars) {
+            val fullName = if (newPrefix.isEmpty()) name else "$newPrefix.$name"
+            out += resolveDebugVariable(fullName, xValue)
+        }
+        if (depth < maxDepth) {
+            for (child in groups) collectGroupVariables(child, newPrefix, out, depth + 1, maxDepth)
+        }
+    }
+
+    /**
+     * Synchronously drains an [XCompositeNode]-based async API into a (regulars, groups) pair.
+     *
+     * The same XCompositeNode protocol is used by both [XStackFrame.computeChildren] and
+     * [XValueGroup.computeChildren], so this helper takes a lambda that performs the actual call.
+     *
+     * Note: we deliberately do NOT wrap the invocation in [runOnEdt]. The XDebugger API is
+     * designed to be called from any thread — implementations dispatch their own work to the
+     * debugger I/O thread. Calling from the EDT can deadlock or be ignored by some debuggers
+     * (notably JS/TS, which uses a CDP/V8 inspector connection on a dedicated thread).
+     */
+    private fun computeChildrenSync(
+        timeoutMs: Long = 5_000L,
+        compute: (XCompositeNode) -> Unit
+    ): Pair<List<Pair<String, XValue>>, List<XValueGroup>> {
+        val regulars = mutableListOf<Pair<String, XValue>>()
+        val groups = mutableListOf<XValueGroup>()
+        val latch = CountDownLatch(1)
+        compute(object : XCompositeNode {
+            override fun addChildren(list: XValueChildrenList, last: Boolean) {
+                for (i in 0 until list.size()) regulars.add(list.getName(i) to list.getValue(i))
+                groups.addAll(list.topGroups)
+                groups.addAll(list.bottomGroups)
+                if (last) latch.countDown()
+            }
+            override fun tooManyChildren(remaining: Int) { latch.countDown() }
+            override fun tooManyChildren(remaining: Int, addNextChildren: Runnable) { latch.countDown() }
+            override fun setAlreadySorted(alreadySorted: Boolean) {}
+            override fun setErrorMessage(errorMessage: String) { latch.countDown() }
+            override fun setErrorMessage(errorMessage: String, link: XDebuggerTreeNodeHyperlink?) { latch.countDown() }
+            override fun setMessage(message: String, icon: Icon?, attributes: com.intellij.ui.SimpleTextAttributes, link: XDebuggerTreeNodeHyperlink?) {}
+            override fun isObsolete() = false
+        })
+        latch.await(timeoutMs, TimeUnit.MILLISECONDS)
+        return regulars to groups
     }
 
     // ── add_conditional_breakpoint ────────────────────────────────────────────
