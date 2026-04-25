@@ -709,8 +709,9 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
     @McpTool(name = "get_project_structure")
     @McpDescription(description = """
         Returns the structure of the IntelliJ project: active SDK (with homePath), all SDKs registered
-        in IntelliJ (with homePath, useful to suggest switching), modules, source roots, excluded folders,
-        and module-to-module dependencies.
+        in IntelliJ (with homePath, useful to suggest switching), modules (with their per-module SDK
+        when it overrides the project SDK), source roots, excluded folders, and module-to-module
+        dependencies.
         Useful to understand the project layout (where sources, tests, and resources live) before
         navigating or editing files.
         Source root types: source, test, resource, testResource.
@@ -751,9 +752,13 @@ class McpCompanionCodeAnalysisToolset : McpToolset {
                 }
                 val deps = rootManager.dependencies.map { it.name }
                 val moduleType = try { ModuleType.get(module).id } catch (_: Exception) { null }
+                val moduleSdk = rootManager.sdk?.takeIf { it.name != sdk?.name }?.let { s ->
+                    SdkInfo(name = s.name, type = s.sdkType.name, version = s.versionString, homePath = s.homePath)
+                }
                 ModuleInfo(
                     name = module.name,
                     type = moduleType,
+                    sdk = moduleSdk,
                     sourceRoots = sourceRoots,
                     excludedFolders = excluded.ifEmpty { null },
                     dependencies = deps.ifEmpty { null }
@@ -816,5 +821,5 @@ private fun isApplicable(
 
 @Serializable data class ProjectStructure(val name: String, val basePath: String, val sdk: SdkInfo?, val availableSdks: List<SdkInfo>, val modules: List<ModuleInfo>)
 @Serializable data class SdkInfo(val name: String, val type: String, val version: String?, val homePath: String? = null)
-@Serializable data class ModuleInfo(val name: String, val type: String? = null, val sourceRoots: List<SourceRootInfo>, val excludedFolders: List<String>? = null, val dependencies: List<String>? = null)
+@Serializable data class ModuleInfo(val name: String, val type: String? = null, val sdk: SdkInfo? = null, val sourceRoots: List<SourceRootInfo>, val excludedFolders: List<String>? = null, val dependencies: List<String>? = null)
 @Serializable data class SourceRootInfo(val path: String, val type: String)
