@@ -153,6 +153,13 @@
             id="io.nimbly.mcpcompanion.activityWidget"
             implementation="io.nimbly.mcpcompanion.McpCompanionStatusBarWidgetFactory"
             order="last"/>
+        <toolWindow
+            id="MCP Companion Monitoring"
+            anchor="bottom"
+            secondary="true"
+            canCloseContents="false"
+            icon="/icons/mcpToolWindow.svg"
+            factoryClass="io.nimbly.mcpcompanion.McpCompanionCallsToolWindowFactory"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij.mcpServer">

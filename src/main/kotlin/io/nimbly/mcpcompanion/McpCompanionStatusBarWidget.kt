@@ -79,10 +79,41 @@ class McpCompanionStatusBarWidget(private val project: Project) : CustomStatusBa
         cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
         toolTipText = " "
         addMouseListener(object : MouseAdapter() {
-            override fun mouseClicked(e: MouseEvent) {
+            override fun mouseClicked(e: MouseEvent) = showActionsPopup(e)
+        })
+    }
+
+    /**
+     * Shows an IntelliJ-style action popup (like "Indents Detection" in the editor status bar)
+     * with two actions, anchored above the widget.
+     */
+    private fun showActionsPopup(e: MouseEvent) {
+        val showMonitoring = object : com.intellij.openapi.actionSystem.AnAction("MCP Monitoring") {
+            override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent) {
+                com.intellij.openapi.wm.ToolWindowManager.getInstance(project)
+                    .getToolWindow(McpCompanionCallsToolWindowFactory.TOOL_WINDOW_ID)
+                    ?.activate(null)
+            }
+        }
+        val openSettings = object : com.intellij.openapi.actionSystem.AnAction("MCP Companion settings…") {
+            override fun actionPerformed(e: com.intellij.openapi.actionSystem.AnActionEvent) {
                 ShowSettingsUtil.getInstance().showSettingsDialog(project, McpCompanionConfigurable::class.java)
             }
-        })
+        }
+        val group = com.intellij.openapi.actionSystem.DefaultActionGroup(showMonitoring, openSettings)
+        val popup = com.intellij.openapi.ui.popup.JBPopupFactory.getInstance().createActionGroupPopup(
+            "MCP Server Companion",
+            group,
+            com.intellij.ide.DataManager.getInstance().getDataContext(e.component),
+            com.intellij.openapi.ui.popup.JBPopupFactory.ActionSelectionAid.SPEEDSEARCH,
+            true,
+        )
+        popup.show(
+            com.intellij.ui.awt.RelativePoint(
+                e.component,
+                java.awt.Point(0, -popup.content.preferredSize.height),
+            )
+        )
     }
 
     /**
@@ -133,9 +164,9 @@ class McpCompanionStatusBarWidget(private val project: Project) : CustomStatusBa
 
     private fun buildTooltip(
         settings: McpCompanionSettings,
-        active: List<McpCompanionSettings.ActiveCall>,
+        active: List<McpCompanionSettings.CallRecord>,
     ): String {
-        val recent = settings.getRecentCalls()
+        val recent = settings.getRecentCompletedCalls()
         val now = System.nanoTime()
 
         val sb = StringBuilder("<html><b>MCP Server Companion</b>")
@@ -145,20 +176,23 @@ class McpCompanionStatusBarWidget(private val project: Project) : CustomStatusBa
             sb.append("<br><nobr>No active call &mdash; $total call(s) this session.</nobr>")
         } else {
             sb.append("<br><b>${active.size} active call(s):</b>")
-            active.sortedBy { it.startNanos }.forEach { c ->
-                val ms = ((c.endNanos ?: now) - c.startNanos) / 1_000_000
-                sb.append("<br><nobr>&nbsp;&nbsp;● <code>${c.name}</code> &mdash; ${formatElapsed(ms)}</nobr>")
+            active.sortedBy { it.startedNanos }.forEach { c ->
+                val ms = ((c.endedNanos ?: now) - c.startedNanos) / 1_000_000
+                val prefix = if (c.isOwnTool) "" else "<i>(other)</i> "
+                sb.append("<br><nobr>&nbsp;&nbsp;● ${prefix}<code>${c.toolName}</code> &mdash; ${formatElapsed(ms)}</nobr>")
             }
         }
 
         if (recent.isNotEmpty()) {
             sb.append("<br><br><b>Last ${recent.size} completed:</b>")
             recent.forEach { c ->
-                sb.append("<br><nobr>&nbsp;&nbsp;✓ <code>${c.name}</code> &mdash; ${formatElapsed(c.durationMs)}</nobr>")
+                val durationMs = c.durationMs ?: 0L
+                val prefix = if (c.isOwnTool) "" else "<i>(other)</i> "
+                sb.append("<br><nobr>&nbsp;&nbsp;✓ ${prefix}<code>${c.toolName}</code> &mdash; ${formatElapsed(durationMs)}</nobr>")
             }
         }
 
-        sb.append("<br><br><i>Click to open MCP Companion settings</i></html>")
+        sb.append("<br><br><i>Click for actions</i></html>")
         return sb.toString()
     }
 

@@ -61,70 +61,102 @@ class McpCompanionSettings : PersistentStateComponent<McpCompanionSettings.State
     fun getAllCallCounts(): Map<String, Int> = callCounts.toMap()
     fun maxCallCount(): Int = callCounts.values.maxOrNull() ?: 0
 
-    // ── Active call tracking (powers the status bar widget) ──────────────────
+    // ── Unified call tracking (powers widget + MCP Calls tool window) ──────
     /**
-     * Snapshot of a tool invocation visible in the status bar widget.
-     * [endNanos] is null while the call is running; once set, the displayed elapsed time
-     * stops ticking (the entry is held visible for [MIN_VISIBLE_MS] but the value is frozen).
-     */
-    data class ActiveCall(val id: Long, val name: String, val startNanos: Long, val endNanos: Long? = null)
-
-    /** A finished tool invocation, recorded for the recent-calls history. */
-    data class CompletedCall(val name: String, val durationMs: Long, val finishedAtMillis: Long)
-
-    private val activeCalls = java.util.concurrent.ConcurrentHashMap<Long, ActiveCall>()
-    private val activeCallSeq = java.util.concurrent.atomic.AtomicLong(0)
-
-    /** Most recent completed calls, newest first. Capped at [MAX_RECENT]. */
-    private val recentCalls = ArrayDeque<CompletedCall>()
-    private val recentCallsLock = Any()
-
-    /**
-     * Registers the start of a tool invocation and schedules automatic cleanup when
-     * the calling coroutine completes (success, failure, or cancellation). The widget
-     * polls [getActiveCalls] every 200 ms — no need to call any "end" method explicitly.
+     * Detailed record of one MCP tool call. The same record is used for:
+     * - widget icon (active animation while [endedNanos] is null OR `now < forceVisibleUntilNanos`)
+     * - widget tooltip (last [MAX_RECENT] entries)
+     * - MCP Calls tool window (last [MAX_CALL_RECORDS] entries with full param JSON)
      *
-     * Sub-[MIN_VISIBLE_MS] calls are artificially held visible in [activeCalls] so the
-     * status bar's ⚡ indicator is perceptible even for ultra-fast calls (a few ms).
-     * The [CompletedCall.durationMs] recorded in the history is always the *real* duration.
-     *
-     * Pass `coroutineContext[Job]` from the calling suspend function as [job].
-     * If [job] is null (defensive), the entry will linger in memory — kept simple to
-     * avoid the cost of a global timeout sweeper for the unusual case.
+     * Note: the response payload is NOT captured — `ToolCallListener.afterMcpToolCall` in the
+     * current IntelliJ MCP API does not expose the return value of the tool function.
      */
-    fun beginActiveCall(name: String, job: kotlinx.coroutines.Job?) {
-        val id = activeCallSeq.incrementAndGet()
-        val startNanos = System.nanoTime()
-        activeCalls[id] = ActiveCall(id, name, startNanos)
-        job?.invokeOnCompletion {
-            val endNanos = System.nanoTime()
-            val realDurationMs = (endNanos - startNanos) / 1_000_000
-            val holdMs = (MIN_VISIBLE_MS - realDurationMs).coerceAtLeast(0L)
+    data class CallRecord(
+        val callId: Int,
+        val toolName: String,
+        val parametersJson: String,
+        val client: String?,
+        val isOwnTool: Boolean,
+        val startedAtMillis: Long,
+        val startedNanos: Long,
+        @Volatile var endedNanos: Long? = null,
+        @Volatile var forceVisibleUntilNanos: Long = 0L,
+        @Volatile var status: Status = Status.RUNNING,
+        @Volatile var errorMessage: String? = null,
+        @Volatile var response: String? = null,
+    ) {
+        enum class Status { RUNNING, SUCCESS, ERROR }
 
-            // Freeze the displayed elapsed time at the real duration (no ticking past it).
-            activeCalls[id] = ActiveCall(id, name, startNanos, endNanos = endNanos)
+        /** True while the widget should display the active (animated) icon for this call. */
+        fun isVisuallyActive(now: Long): Boolean = endedNanos == null || now < forceVisibleUntilNanos
 
-            val finalize = Runnable {
-                activeCalls.remove(id)
-                synchronized(recentCallsLock) {
-                    recentCalls.addFirst(CompletedCall(name, realDurationMs, System.currentTimeMillis()))
-                    while (recentCalls.size > MAX_RECENT) recentCalls.removeLast()
-                }
-            }
-            if (holdMs == 0L) {
-                finalize.run()
-            } else {
-                com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService()
-                    .schedule(finalize, holdMs, java.util.concurrent.TimeUnit.MILLISECONDS)
-            }
-        }
+        /** Real duration in ms once the call completed; null while still running. */
+        val durationMs: Long? get() = endedNanos?.let { (it - startedNanos) / 1_000_000 }
     }
 
-    /** Returns a snapshot of the currently-running tool invocations. Safe to call from EDT. */
-    fun getActiveCalls(): List<ActiveCall> = activeCalls.values.toList()
+    private val callRecords = ArrayDeque<CallRecord>()
+    private val callRecordsLock = Any()
+    private val callRecordsByCallId = java.util.concurrent.ConcurrentHashMap<Int, CallRecord>()
 
-    /** Returns the [MAX_RECENT] most recent completed calls, newest first. */
-    fun getRecentCalls(): List<CompletedCall> = synchronized(recentCallsLock) { recentCalls.toList() }
+    /** Listeners notified whenever a record is added or updated (MCP Calls tool window subscribes). */
+    private val callRecordListeners = java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
+    fun addCallRecordListener(listener: () -> Unit) { callRecordListeners.add(listener) }
+    fun removeCallRecordListener(listener: () -> Unit) { callRecordListeners.remove(listener) }
+    private fun fireCallRecordsChanged() = callRecordListeners.forEach { runCatching { it() } }
+
+    /** Called by [McpCompanionToolCallListener] BEFORE each tool invocation. */
+    fun recordCallStart(callId: Int, toolName: String, parametersJson: String, client: String?) {
+        val record = CallRecord(
+            callId = callId,
+            toolName = toolName,
+            parametersJson = cap(parametersJson),
+            client = client,
+            isOwnTool = isOwnTool(toolName),
+            startedAtMillis = System.currentTimeMillis(),
+            startedNanos = System.nanoTime(),
+        )
+        synchronized(callRecordsLock) {
+            callRecords.addFirst(record)
+            while (callRecords.size > MAX_CALL_RECORDS) callRecords.removeLast()
+        }
+        callRecordsByCallId[callId] = record
+        fireCallRecordsChanged()
+    }
+
+    /** Called by [McpCompanionToolCallListener] AFTER each tool invocation. */
+    fun recordCallEnd(callId: Int, throwable: Throwable?) {
+        val record = callRecordsByCallId.remove(callId) ?: return
+        val endNanos = System.nanoTime()
+        val realDurationMs = (endNanos - record.startedNanos) / 1_000_000
+        val holdMs = (MIN_VISIBLE_MS - realDurationMs).coerceAtLeast(0L)
+
+        record.endedNanos = endNanos
+        record.forceVisibleUntilNanos = endNanos + holdMs * 1_000_000
+        record.status = if (throwable != null) CallRecord.Status.ERROR else CallRecord.Status.SUCCESS
+        record.errorMessage = throwable?.let { "${it.javaClass.simpleName}: ${it.message}" }
+
+        // Schedule a "wake-up" so the widget refreshes once the artificial visible period ends.
+        if (holdMs > 0) {
+            com.intellij.util.concurrency.AppExecutorUtil.getAppScheduledExecutorService().schedule(
+                { fireCallRecordsChanged() }, holdMs, java.util.concurrent.TimeUnit.MILLISECONDS
+            )
+        }
+        fireCallRecordsChanged()
+    }
+
+    /** Returns all records (newest first), capped at [MAX_CALL_RECORDS]. */
+    fun getCallRecords(): List<CallRecord> = synchronized(callRecordsLock) { callRecords.toList() }
+
+    /** Records that should still display the "active" animation in the widget. */
+    fun getActiveCalls(): List<CallRecord> {
+        val now = System.nanoTime()
+        return synchronized(callRecordsLock) { callRecords.filter { it.isVisuallyActive(now) } }
+    }
+
+    /** The [MAX_RECENT] most recent completed records (newest first), for the widget tooltip. */
+    fun getRecentCompletedCalls(): List<CallRecord> = synchronized(callRecordsLock) {
+        callRecords.asSequence().filter { it.endedNanos != null }.take(MAX_RECENT).toList()
+    }
 
     companion object {
 
@@ -139,8 +171,33 @@ class McpCompanionSettings : PersistentStateComponent<McpCompanionSettings.State
          */
         const val MIN_VISIBLE_MS = 800L
 
+        /** Maximum number of detailed call records kept in memory for the MCP Calls tool window. */
+        const val MAX_CALL_RECORDS = 50
+
+        /**
+         * Per-record cap on JSON payload size (parameters or response).
+         * Anything larger is truncated and a marker is appended. Protects against memory
+         * pressure when a single call carries a huge payload (base64 images, big query results, …).
+         * 64 KB is enough for any reasonable parameter set and still readable in the dialog.
+         */
+        const val MAX_PAYLOAD_CHARS = 64 * 1024
+
+        /** Truncates [s] to [MAX_PAYLOAD_CHARS] and appends a "(truncated, N more)" marker if needed. */
+        fun cap(s: String): String =
+            if (s.length <= MAX_PAYLOAD_CHARS) s
+            else s.take(MAX_PAYLOAD_CHARS) + "\n… (truncated, ${s.length - MAX_PAYLOAD_CHARS} more characters)"
+
         /** Tools disabled by default — higher risk, require explicit opt-in in Settings. */
         val DISABLED_BY_DEFAULT = setOf("send_to_terminal", "delete_file", "execute_database_query", "vcs_delete_branch")
+
+        /**
+         * Flat set of every MCP Companion tool name — used to filter the global [ToolCallListener]
+         * so we only record OUR tool invocations (and not those from JetBrains' built-in toolsets
+         * or other third-party plugins that may also run on the same MCP server).
+         */
+        val ALL_TOOL_NAMES: Set<String> by lazy { TOOL_GROUPS.values.flatten().toSet() }
+
+        fun isOwnTool(name: String): Boolean = name in ALL_TOOL_NAMES
 
         /**
          * Tools polled at high frequency (e.g. called by a Claude Code UserPromptSubmit hook on every

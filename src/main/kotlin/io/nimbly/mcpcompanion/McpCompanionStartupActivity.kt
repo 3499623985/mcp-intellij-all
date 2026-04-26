@@ -23,6 +23,23 @@ class McpCompanionStartupActivity : ProjectActivity {
         // Eagerly start background-process polling so get_ide_snapshot reflects live activity.
         ProcessTracker.getInstance(project)
 
+        // Subscribe (once per IDE) to MCP tool call events to populate the calls history.
+        // Uses an AtomicBoolean guard because this ProjectActivity runs once per opened project
+        // but we want a single application-level subscription.
+        if (toolCallListenerSubscribed.compareAndSet(false, true)) {
+            runCatching {
+                ApplicationManager.getApplication().messageBus
+                    .connect()  // tied to application disposable
+                    .subscribe(
+                        com.intellij.mcpserver.ToolCallListener.Companion.TOPIC,
+                        McpCompanionToolCallListener(),
+                    )
+            }.onFailure {
+                // MCP Server plugin not available or topic missing — non-fatal: history will be empty.
+                toolCallListenerSubscribed.set(false)
+            }
+        }
+
         // Register Escape key listener on all current and future editors.
         // Guard with ESCAPE_LISTENER_KEY to prevent double-registration when multiple projects open.
         // editorReleased removes the listener so editors don't accumulate listeners after being closed.
@@ -119,5 +136,7 @@ class McpCompanionStartupActivity : ProjectActivity {
     companion object {
         private val ESCAPE_LISTENER_KEY =
             com.intellij.openapi.util.Key.create<KeyAdapter>("mcp.companion.escape.listener")
+
+        private val toolCallListenerSubscribed = java.util.concurrent.atomic.AtomicBoolean(false)
     }
 }
