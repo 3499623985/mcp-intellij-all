@@ -1,4 +1,4 @@
-package io.nimbly.mcpcompanion
+package io.nimbly.mcpcompanion.ui.monitoring
 
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Document
@@ -37,6 +37,7 @@ import javax.swing.JPanel
 import javax.swing.JScrollPane
 import javax.swing.JTextArea
 import javax.swing.ListCellRenderer
+import io.nimbly.mcpcompanion.McpCompanionSettings
 
 /**
  * Tool window listing the most recent MCP tool calls.
@@ -71,12 +72,16 @@ internal class McpCompanionCallsPanel(private val project: Project) : JPanel(Bor
     // Read-only JSON viewers — proper IntelliJ Editor with syntax highlighting + code folding.
     private val parametersDocument: Document = EditorFactory.getInstance().createDocument("")
     private val responseDocument: Document = EditorFactory.getInstance().createDocument("")
+    private val errorsDocument: Document = EditorFactory.getInstance().createDocument("")
     private val parametersEditor: Editor = createJsonViewer(parametersDocument, project)
     private val responseEditor: Editor = createJsonViewer(responseDocument, project)
+    // Errors are usually long single-line stack traces — enable soft wrap so the user can read them.
+    private val errorsEditor: Editor = createJsonViewer(errorsDocument, project, softWrap = true)
 
     private val tabbedPane = com.intellij.ui.components.JBTabbedPane().apply {
         addTab("Parameters", parametersEditor.component)
         addTab("Response", responseEditor.component)
+        addTab("Errors", errorsEditor.component)
     }
 
     private val list = JBList(model).apply {
@@ -116,6 +121,7 @@ internal class McpCompanionCallsPanel(private val project: Project) : JPanel(Bor
         McpCompanionSettings.getInstance().removeCallRecordListener(refreshListener)
         EditorFactory.getInstance().releaseEditor(parametersEditor)
         EditorFactory.getInstance().releaseEditor(responseEditor)
+        EditorFactory.getInstance().releaseEditor(errorsEditor)
     }
 
     private fun refreshFromSettings() {
@@ -134,15 +140,16 @@ internal class McpCompanionCallsPanel(private val project: Project) : JPanel(Bor
     private fun updateDetailsPanel() {
         val r = list.selectedValue
         val params = r?.parametersJson ?: ""
-        val response = if (r == null) "" else buildString {
-            append(r.response ?: "(not captured — current IntelliJ MCP API does not expose tool return values via ToolCallListener)")
-            if (r.errorMessage != null) {
-                append("\n\n─── Error ───\n")
-                append(r.errorMessage)
-            }
-        }
+        val response = if (r == null) ""
+            else r.response ?: "(not captured — current IntelliJ MCP API does not expose tool return values via ToolCallListener)"
+        val errors = r?.errorMessage ?: ""
         setDocumentText(parametersDocument, params)
         setDocumentText(responseDocument, response)
+        setDocumentText(errorsDocument, errors)
+        // Auto-switch to the Errors tab when an error record is selected, otherwise default to Parameters.
+        if (r != null) {
+            tabbedPane.selectedIndex = if (errors.isNotEmpty()) 2 else 0
+        }
     }
 
     private fun setDocumentText(doc: Document, text: String) {
@@ -151,7 +158,7 @@ internal class McpCompanionCallsPanel(private val project: Project) : JPanel(Bor
         }
     }
 
-    private fun createJsonViewer(doc: Document, project: Project): Editor {
+    private fun createJsonViewer(doc: Document, project: Project, softWrap: Boolean = false): Editor {
         val factory = EditorFactory.getInstance()
         val editor = factory.createViewer(doc, project) as EditorEx
         // Use JSON syntax highlighting if the JSON file type is registered (it is in all IntelliJ-based IDEs).
@@ -161,7 +168,7 @@ internal class McpCompanionCallsPanel(private val project: Project) : JPanel(Bor
             isLineNumbersShown = false
             isLineMarkerAreaShown = false
             isFoldingOutlineShown = false
-            isUseSoftWraps = false
+            isUseSoftWraps = softWrap
             additionalLinesCount = 0
             additionalColumnsCount = 0
             isCaretRowShown = false

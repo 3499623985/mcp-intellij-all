@@ -1,4 +1,4 @@
-package io.nimbly.mcpcompanion
+package io.nimbly.mcpcompanion.settings
 
 import com.intellij.mcpserver.annotations.McpDescription
 import com.intellij.mcpserver.annotations.McpTool
@@ -32,6 +32,8 @@ import javax.swing.JPanel
 import javax.swing.JToggleButton
 import javax.swing.SwingUtilities
 import javax.swing.Timer
+import io.nimbly.mcpcompanion.telemetry.McpCompanionTelemetry
+import io.nimbly.mcpcompanion.McpCompanionSettings
 
 class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
 
@@ -251,9 +253,9 @@ class McpCompanionConfigurable : BoundConfigurable("MCP Server Companion") {
             group("Claude Code — Live IDE Context Hook") {
                 row {
                     comment(
-                        "<html>Have Claude Code auto-inject the current IDE state (active file, selection, runs,<br>" +
+                        "Have Claude Code auto-inject the current IDE state (active file, selection, runs,<br>" +
                         "build, indexing) into every prompt, so the AI always knows what you're working on<br>" +
-                        "— no need to tell it which file is open.</html>"
+                        "— no need to tell it which file is open."
                     )
                 }
                 row {

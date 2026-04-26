@@ -1,4 +1,4 @@
-package io.nimbly.mcpcompanion
+package io.nimbly.mcpcompanion.util
 
 import com.intellij.openapi.Disposable
 import com.intellij.openapi.components.Service

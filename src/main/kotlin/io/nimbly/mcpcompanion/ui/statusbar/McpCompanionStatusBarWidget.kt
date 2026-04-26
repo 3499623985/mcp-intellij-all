@@ -1,4 +1,4 @@
-package io.nimbly.mcpcompanion
+package io.nimbly.mcpcompanion.ui.statusbar
 
 import com.intellij.openapi.options.ShowSettingsUtil
 import com.intellij.openapi.project.Project
@@ -16,6 +16,9 @@ import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.SwingConstants
 import javax.swing.Timer
+import io.nimbly.mcpcompanion.settings.McpCompanionConfigurable
+import io.nimbly.mcpcompanion.McpCompanionSettings
+import io.nimbly.mcpcompanion.ui.monitoring.McpCompanionCallsToolWindowFactory
 
 /**
  * Status bar widget that shows MCP tool activity in real time.

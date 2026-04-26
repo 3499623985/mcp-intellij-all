@@ -16,6 +16,10 @@ import com.intellij.xdebugger.XDebuggerManager
 import com.intellij.xdebugger.XDebuggerUtil
 import com.intellij.xdebugger.breakpoints.XLineBreakpoint
 import com.intellij.xdebugger.evaluation.EvaluationMode
+import io.nimbly.mcpcompanion.toolsets.McpCompanionCodeAnalysisToolset
+import io.nimbly.mcpcompanion.toolsets.McpCompanionDiagnosticToolset
+import io.nimbly.mcpcompanion.toolsets.McpCompanionEditorToolset
+import io.nimbly.mcpcompanion.toolsets.MCP_HIGHLIGHT_KEY
 
 /**
  * Integration tests using IntelliJ's headless platform (BasePlatformTestCase).

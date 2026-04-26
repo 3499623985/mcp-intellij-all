@@ -1,4 +1,4 @@
-package io.nimbly.mcpcompanion
+package io.nimbly.mcpcompanion.lifecycle
 
 import com.intellij.mcpserver.McpCallInfo
 import com.intellij.mcpserver.McpToolDescriptor
@@ -6,6 +6,7 @@ import com.intellij.mcpserver.McpToolSideEffectEvent
 import com.intellij.mcpserver.ToolCallListener
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import io.nimbly.mcpcompanion.McpCompanionSettings
 
 /**
  * Application-level listener for every MCP tool invocation.

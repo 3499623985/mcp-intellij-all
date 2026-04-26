@@ -1,4 +1,4 @@
-package io.nimbly.mcpcompanion
+package io.nimbly.mcpcompanion.toolsets
 
 import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.mcpserver.McpToolset
@@ -20,6 +20,8 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.text.SimpleDateFormat
 import kotlin.coroutines.coroutineContext
+import io.nimbly.mcpcompanion.util.resolveProject
+import io.nimbly.mcpcompanion.McpCompanionSettings
 
 class McpCompanionVcsToolset : McpToolset {
 
@@ -881,11 +883,28 @@ class McpCompanionVcsToolset : McpToolset {
         val project = resolveProject(projectPath)
         return withContext(Dispatchers.IO) {
             try {
+                // First check whether there are actually any conflicts — Git.ResolveConflicts is a
+                // no-op when there are none, but the previous implementation would still claim success.
+                val cl = git4ideaLoader() ?: return@withContext "Git plugin (Git4Idea) not available."
+                val repo = getFirstRepo(cl, project) ?: return@withContext "No Git repository found."
+                val root = invoke(repo, "getRoot") as? com.intellij.openapi.vfs.VirtualFile
+                    ?: return@withContext "Cannot get repository root."
+                val (statusOk, statusOut) = gitExec(cl, project, root, "STATUS", "--porcelain")
+                if (!statusOk) return@withContext "Error running git status: $statusOut"
+                val conflictCodes = setOf("UU", "AA", "DD", "AU", "UA", "DU", "UD")
+                val conflictCount = statusOut.lines().count { line ->
+                    line.length >= 3 && line.substring(0, 2) in conflictCodes
+                }
+                if (conflictCount == 0) {
+                    return@withContext "No conflicts to resolve — repository is clean. Run a failed merge/rebase first, then call this tool."
+                }
+
+                var actionFound = true
                 com.intellij.openapi.application.ApplicationManager.getApplication()
                     .invokeAndWait({
                         val actionManager = com.intellij.openapi.actionSystem.ActionManager.getInstance()
                         val action = actionManager.getAction("Git.ResolveConflicts")
-                            ?: run { return@invokeAndWait }
+                        if (action == null) { actionFound = false; return@invokeAndWait }
                         val dataContext = com.intellij.openapi.actionSystem.impl.SimpleDataContext
                             .getProjectContext(project)
                         val event = com.intellij.openapi.actionSystem.AnActionEvent.createFromDataContext(
@@ -893,7 +912,8 @@ class McpCompanionVcsToolset : McpToolset {
                         )
                         action.actionPerformed(event)
                     }, com.intellij.openapi.application.ModalityState.any())
-                "Opened IntelliJ merge tool (Resolve Conflicts dialog)"
+                if (!actionFound) return@withContext "IntelliJ action 'Git.ResolveConflicts' is not registered in this IDE — Git plugin may be disabled."
+                "Opened IntelliJ merge tool for $conflictCount conflicted file(s)."
             } catch (e: Exception) { "Error: ${e.javaClass.simpleName}: ${e.message}" }
         }
     }

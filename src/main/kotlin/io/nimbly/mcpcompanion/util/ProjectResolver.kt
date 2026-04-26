@@ -1,4 +1,4 @@
-package io.nimbly.mcpcompanion
+package io.nimbly.mcpcompanion.util
 
 import com.intellij.mcpserver.project
 import com.intellij.openapi.project.Project

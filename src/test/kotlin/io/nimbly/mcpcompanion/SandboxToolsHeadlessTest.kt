@@ -11,6 +11,8 @@ import com.intellij.xdebugger.XDebuggerManager
 import kotlinx.coroutines.runBlocking
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.DefaultTreeModel
+import io.nimbly.mcpcompanion.toolsets.McpCompanionDiagnosticToolset
+import io.nimbly.mcpcompanion.toolsets.McpCompanionBuildToolset
 
 /**
  * Headless tests for tools previously marked as "manual only".

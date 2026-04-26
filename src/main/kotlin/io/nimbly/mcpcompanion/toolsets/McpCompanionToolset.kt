@@ -1,4 +1,4 @@
-package io.nimbly.mcpcompanion
+package io.nimbly.mcpcompanion.toolsets
 
 import com.intellij.mcpserver.McpToolset
 import com.intellij.mcpserver.annotations.McpDescription
@@ -12,6 +12,10 @@ import com.intellij.util.ui.UIUtil
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlin.coroutines.coroutineContext
+import io.nimbly.mcpcompanion.util.resolveFilePathOrError
+import io.nimbly.mcpcompanion.util.resolveProject
+import io.nimbly.mcpcompanion.util.runOnEdt
+import io.nimbly.mcpcompanion.McpCompanionSettings
 
 class McpCompanionToolset : McpToolset {
 

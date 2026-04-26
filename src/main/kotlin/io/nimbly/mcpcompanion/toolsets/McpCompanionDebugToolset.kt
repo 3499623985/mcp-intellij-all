@@ -1,4 +1,4 @@
-package io.nimbly.mcpcompanion
+package io.nimbly.mcpcompanion.toolsets
 
 import com.intellij.execution.ProgramRunnerUtil
 import com.intellij.execution.RunManager
@@ -31,6 +31,10 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import javax.swing.Icon
 import kotlin.coroutines.coroutineContext
+import io.nimbly.mcpcompanion.util.resolveFilePathOrError
+import io.nimbly.mcpcompanion.util.resolveProject
+import io.nimbly.mcpcompanion.util.runOnEdt
+import io.nimbly.mcpcompanion.McpCompanionSettings
 
 class McpCompanionDebugToolset : McpToolset {
 

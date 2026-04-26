@@ -13,7 +13,7 @@ val secrets = Properties().apply {
 }
 
 group = "io.nimbly"
-version = "2.18.0"
+version = "3.0.0"
 
 repositories {
     mavenCentral()
@@ -48,6 +48,7 @@ intellijPlatform {
         }
         changeNotes = """
             <ul>
+                <li><b>3.0.0</b> — Major internal refactoring: codebase split into clearly-separated packages.</li>
                 <li><b>2.18.0</b> — New <b>MCP Companion Monitoring</b> tool window: shows the 50 most recent MCP tool calls with HH:MM:SS timestamps, durations, and full JSON parameters (calls from other MCP plugins are also captured and shown in gray). Status bar widget click now opens a popup with two actions: "MCP Monitoring" and "MCP Companion settings…".</li>
                 <li><b>2.17.0</b> — New status bar widget showing live MCP activity: animated icon during tool calls, tooltip with the currently-running tools and the 5 most recent completed (with durations), and click to open the plugin settings.</li>
                 <li><b>2.16.0</b> — New Gradle tools: <code>run_gradle_task</code>, <code>get_gradle_tasks</code>, <code>refresh_gradle_project</code>, <code>get_gradle_dependencies</code>, <code>stop_gradle_task</code>, and <code>get_gradle_project_info</code> — full Gradle integration from your AI client (run/list/cancel tasks, inspect imported dependencies, wrapper version, subprojects).</li>

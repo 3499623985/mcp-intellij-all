@@ -2,6 +2,7 @@ package io.nimbly.mcpcompanion
 
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
+import io.nimbly.mcpcompanion.toolsets.McpCompanionVcsToolset
 
 /**
  * Unit tests for McpCompanionVcsToolset.unifiedDiff().

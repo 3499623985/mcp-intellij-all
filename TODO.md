@@ -30,6 +30,8 @@ The `MCP Calls` tool window introduced in 2.18.0 has three known limitations to 
 - **get_gradle_dependencies** — Parsed dependency tree for a given configuration (e.g. `runtimeClasspath`). Lets the AI answer "why do I have this version of jackson?" or "what transitively pulls log4j?".
 - **stop_gradle_task** — Cancel a running Gradle build (equivalent of the red square in the tool window).
 
+- **git move** pàur déplacer ou renommer un fichier
+
 **Comfort:**
 - **get_gradle_project_info** — Wrapper version, JDK used, list of subprojects with their paths, source sets. Helps reasoning about monorepo structure.
 

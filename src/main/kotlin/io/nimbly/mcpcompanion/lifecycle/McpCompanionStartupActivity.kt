@@ -1,4 +1,4 @@
-package io.nimbly.mcpcompanion
+package io.nimbly.mcpcompanion.lifecycle
 
 import com.intellij.notification.Notification
 import com.intellij.notification.NotificationAction
@@ -15,6 +15,9 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.startup.ProjectActivity
 import java.awt.event.KeyAdapter
 import java.awt.event.KeyEvent
+import io.nimbly.mcpcompanion.util.ProcessTracker
+import io.nimbly.mcpcompanion.McpCompanionSettings
+import io.nimbly.mcpcompanion.toolsets.MCP_HIGHLIGHT_KEY
 
 class McpCompanionStartupActivity : ProjectActivity {
 

@@ -3,6 +3,7 @@ package io.nimbly.mcpcompanion
 import com.intellij.openapi.vfs.LocalFileSystem
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import java.io.File
+import io.nimbly.mcpcompanion.toolsets.McpCompanionVcsToolset
 
 /**
  * Real integration tests for the VCS tools (vcs_stage_files, vcs_commit, vcs_stash,

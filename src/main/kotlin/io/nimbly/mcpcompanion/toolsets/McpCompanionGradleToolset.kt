@@ -1,4 +1,4 @@
-package io.nimbly.mcpcompanion
+package io.nimbly.mcpcompanion.toolsets
 
 import com.intellij.execution.executors.DefaultRunExecutor
 import com.intellij.mcpserver.McpToolset
@@ -26,6 +26,8 @@ import org.jetbrains.plugins.gradle.util.GradleConstants
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.coroutines.coroutineContext
+import io.nimbly.mcpcompanion.util.resolveProject
+import io.nimbly.mcpcompanion.McpCompanionSettings
 
 /**
  * Gradle-related MCP tools.

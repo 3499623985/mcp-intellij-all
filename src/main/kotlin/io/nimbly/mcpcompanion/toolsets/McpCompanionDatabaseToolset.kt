@@ -1,4 +1,4 @@
-package io.nimbly.mcpcompanion
+package io.nimbly.mcpcompanion.toolsets
 
 import com.intellij.ide.plugins.PluginManagerCore
 import com.intellij.mcpserver.McpToolset
@@ -13,6 +13,8 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlin.coroutines.coroutineContext
+import io.nimbly.mcpcompanion.util.resolveProject
+import io.nimbly.mcpcompanion.McpCompanionSettings
 
 class McpCompanionDatabaseToolset : McpToolset {
 

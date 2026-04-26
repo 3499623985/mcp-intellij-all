@@ -144,14 +144,14 @@
         <applicationService serviceImplementation="io.nimbly.mcpcompanion.McpCompanionSettings"/>
         <applicationConfigurable
             parentId="tools"
-            instance="io.nimbly.mcpcompanion.McpCompanionConfigurable"
+            instance="io.nimbly.mcpcompanion.settings.McpCompanionConfigurable"
             id="io.nimbly.mcpcompanion.configurable"
             displayName="MCP Server Companion"/>
-        <postStartupActivity implementation="io.nimbly.mcpcompanion.McpCompanionStartupActivity"/>
+        <postStartupActivity implementation="io.nimbly.mcpcompanion.lifecycle.McpCompanionStartupActivity"/>
         <notificationGroup id="MCP Server Companion" displayType="BALLOON"/>
         <statusBarWidgetFactory
             id="io.nimbly.mcpcompanion.activityWidget"
-            implementation="io.nimbly.mcpcompanion.McpCompanionStatusBarWidgetFactory"
+            implementation="io.nimbly.mcpcompanion.ui.statusbar.McpCompanionStatusBarWidgetFactory"
             order="last"/>
         <toolWindow
             id="MCP Companion Monitoring"
@@ -159,17 +159,17 @@
             secondary="true"
             canCloseContents="false"
             icon="/icons/mcpToolWindow.svg"
-            factoryClass="io.nimbly.mcpcompanion.McpCompanionCallsToolWindowFactory"/>
+            factoryClass="io.nimbly.mcpcompanion.ui.monitoring.McpCompanionCallsToolWindowFactory"/>
     </extensions>
 
     <extensions defaultExtensionNs="com.intellij.mcpServer">
-        <mcpToolset implementation="io.nimbly.mcpcompanion.McpCompanionToolset"/>
-        <mcpToolset implementation="io.nimbly.mcpcompanion.McpCompanionEditorToolset"/>
-        <mcpToolset implementation="io.nimbly.mcpcompanion.McpCompanionBuildToolset"/>
-        <mcpToolset implementation="io.nimbly.mcpcompanion.McpCompanionDebugToolset"/>
-        <mcpToolset implementation="io.nimbly.mcpcompanion.McpCompanionDiagnosticToolset"/>
-        <mcpToolset implementation="io.nimbly.mcpcompanion.McpCompanionCodeAnalysisToolset"/>
-        <mcpToolset implementation="io.nimbly.mcpcompanion.McpCompanionDatabaseToolset"/>
-        <mcpToolset implementation="io.nimbly.mcpcompanion.McpCompanionVcsToolset"/>
+        <mcpToolset implementation="io.nimbly.mcpcompanion.toolsets.McpCompanionToolset"/>
+        <mcpToolset implementation="io.nimbly.mcpcompanion.toolsets.McpCompanionEditorToolset"/>
+        <mcpToolset implementation="io.nimbly.mcpcompanion.toolsets.McpCompanionBuildToolset"/>
+        <mcpToolset implementation="io.nimbly.mcpcompanion.toolsets.McpCompanionDebugToolset"/>
+        <mcpToolset implementation="io.nimbly.mcpcompanion.toolsets.McpCompanionDiagnosticToolset"/>
+        <mcpToolset implementation="io.nimbly.mcpcompanion.toolsets.McpCompanionCodeAnalysisToolset"/>
+        <mcpToolset implementation="io.nimbly.mcpcompanion.toolsets.McpCompanionDatabaseToolset"/>
+        <mcpToolset implementation="io.nimbly.mcpcompanion.toolsets.McpCompanionVcsToolset"/>
     </extensions>
 </idea-plugin>

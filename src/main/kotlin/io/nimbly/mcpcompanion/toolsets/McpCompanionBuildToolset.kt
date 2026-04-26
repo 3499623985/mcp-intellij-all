@@ -1,4 +1,4 @@
-package io.nimbly.mcpcompanion
+package io.nimbly.mcpcompanion.toolsets
 
 import com.intellij.execution.impl.ConsoleViewImpl
 import com.intellij.execution.testframework.sm.runner.SMTestProxy
@@ -12,8 +12,8 @@ import com.intellij.openapi.wm.ToolWindowManager
 import com.intellij.ui.tabs.JBTabs
 import com.intellij.util.ui.UIUtil
 import com.intellij.xdebugger.XDebuggerManager
-import io.nimbly.mcpcompanion.tools.readEditorText
-import io.nimbly.mcpcompanion.tools.readText
+import io.nimbly.mcpcompanion.util.readEditorText
+import io.nimbly.mcpcompanion.util.readText
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -21,6 +21,9 @@ import javax.swing.JTree
 import javax.swing.tree.DefaultMutableTreeNode
 import javax.swing.tree.TreeModel
 import kotlin.coroutines.coroutineContext
+import io.nimbly.mcpcompanion.util.resolveProject
+import io.nimbly.mcpcompanion.util.runOnEdt
+import io.nimbly.mcpcompanion.McpCompanionSettings
 
 class McpCompanionBuildToolset : McpToolset {
 

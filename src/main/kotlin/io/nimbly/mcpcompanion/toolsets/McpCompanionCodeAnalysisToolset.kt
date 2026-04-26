@@ -1,4 +1,4 @@
-package io.nimbly.mcpcompanion
+package io.nimbly.mcpcompanion.toolsets
 
 import com.intellij.codeInsight.daemon.DaemonCodeAnalyzer
 import com.intellij.codeInsight.daemon.impl.HighlightInfo
@@ -26,6 +26,10 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlin.coroutines.coroutineContext
+import io.nimbly.mcpcompanion.util.resolveFilePath
+import io.nimbly.mcpcompanion.util.resolveProject
+import io.nimbly.mcpcompanion.util.runOnEdt
+import io.nimbly.mcpcompanion.McpCompanionSettings
 
 class McpCompanionCodeAnalysisToolset : McpToolset {
 

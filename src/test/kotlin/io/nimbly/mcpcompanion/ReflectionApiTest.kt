@@ -2,6 +2,13 @@ package io.nimbly.mcpcompanion
 
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
+import io.nimbly.mcpcompanion.util.ProcessTracker
+import io.nimbly.mcpcompanion.settings.McpCompanionConfigurable
+import io.nimbly.mcpcompanion.toolsets.McpCompanionVcsToolset
+import io.nimbly.mcpcompanion.toolsets.McpCompanionToolset
+import io.nimbly.mcpcompanion.toolsets.McpCompanionDiagnosticToolset
+import io.nimbly.mcpcompanion.toolsets.McpCompanionDatabaseToolset
+import io.nimbly.mcpcompanion.toolsets.McpCompanionBuildToolset
 
 /**
  * Verifies that every method accessed via reflection in this plugin still exists

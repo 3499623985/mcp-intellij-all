@@ -1,4 +1,4 @@
-package io.nimbly.mcpcompanion.tools
+package io.nimbly.mcpcompanion.util
 
 import com.intellij.execution.impl.ConsoleViewImpl
 import com.intellij.openapi.editor.Editor

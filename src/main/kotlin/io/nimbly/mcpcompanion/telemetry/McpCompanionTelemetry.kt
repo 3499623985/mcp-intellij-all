@@ -1,10 +1,11 @@
-package io.nimbly.mcpcompanion
+package io.nimbly.mcpcompanion.telemetry
 
 import com.intellij.openapi.application.ApplicationInfo
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.util.net.HttpConfigurable
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
+import io.nimbly.mcpcompanion.McpCompanionSettings
 
 object McpCompanionTelemetry {
 
